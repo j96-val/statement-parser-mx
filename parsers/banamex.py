@@ -12,6 +12,8 @@ import pdfplumber
 import pytesseract
 from pdf2image import convert_from_path
 
+import config
+
 if TYPE_CHECKING:
     from parsers.base import Transaction
 
@@ -100,7 +102,7 @@ def parse_banamex(pdf_path: str) -> list[Transaction]:
         # rows (e.g. payments) that the text layer doesn't expose ---
         if movement_pages:
             images = convert_from_path(
-                pdf_path, dpi=300,
+                pdf_path, dpi=config.OCR_DPI,
                 first_page=min(movement_pages) + 1,
                 last_page=max(movement_pages) + 1,
             )

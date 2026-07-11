@@ -21,6 +21,7 @@ from parsers.banamex import parse_banamex
 from parsers.invex import parse_invex
 from parsers.nu import parse_nu
 from categorize import categorize
+import config
 import db
 import validate
 
@@ -266,7 +267,7 @@ if __name__ == "__main__":
     pdf_paths = sys.argv[1:]
     if not pdf_paths:
         # no arguments: process everything in statements/
-        folder = Path(__file__).parent / "statements"
+        folder = config.STATEMENTS_DIR
         pdf_paths = [str(p) for p in sorted(folder.glob("*.pdf"))]
         if not pdf_paths:
             print(f"No PDFs found in {folder}/ and no file was passed as an argument.")
@@ -280,7 +281,7 @@ if __name__ == "__main__":
     n_new = db.insert_transactions(conn, rows)
     df = db.fetch_dataframe(conn)
 
-    out_dir = Path(__file__).parent / "reports"
+    out_dir = config.REPORTS_DIR
     out_dir.mkdir(exist_ok=True)
     out = str(out_dir / "consolidated_expense_report.xlsx")
     write_excel(df, out)
@@ -292,7 +293,7 @@ if __name__ == "__main__":
     # validated + inserted PDFs move out of statements/ so the next run
     # doesn't re-scan them; original file is kept (not deleted) for re-extraction
     # if a parser bug is found later - see ROADMAP.md 1.4.
-    processed_dir = Path(__file__).parent / "statements" / "processed"
+    processed_dir = config.STATEMENTS_DIR / "processed"
     processed_dir.mkdir(parents=True, exist_ok=True)
     for pdf_path in imported_paths:
         src = Path(pdf_path)

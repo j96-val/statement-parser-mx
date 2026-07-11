@@ -19,6 +19,26 @@ sudo apt install tesseract-ocr poppler-utils
 #             and poppler from https://github.com/oschwartz10612/poppler-windows
 ```
 
+### Troubleshooting
+
+Sanity-check the install before running the pipeline:
+
+```bash
+tesseract --version
+pdftoppm -v
+```
+
+- **macOS — `tesseract: command not found`**: Homebrew's bin dir isn't on
+  `PATH` (`/opt/homebrew/bin` on Apple Silicon, `/usr/local/bin` on Intel).
+  Open a new terminal, or run `brew shellenv` and follow its instructions.
+- **Ubuntu/Debian — `pdf2image.exceptions.PDFInfoNotInstalledError` /
+  "Unable to get page count. Is poppler installed and in PATH?"**: means
+  `poppler-utils` specifically is missing, even if `tesseract-ocr` is
+  installed — they're separate packages. `sudo apt install poppler-utils`.
+- **Windows**: neither installer adds itself to `PATH` automatically —
+  manually add each tool's `bin/` folder to your user `PATH` environment
+  variable, then open a new terminal for it to take effect.
+
 ## Usage
 
 1. Drop your PDFs into `statements/`
@@ -38,6 +58,35 @@ python3 build_report.py path/to/one_statement.pdf path/to/another.pdf
 
 The bank for each PDF is auto-detected (by filename or content) — you can
 freely mix banks and months in the same run.
+
+## Example output
+
+Sample run against two files (fake data, not a real statement):
+
+```
+$ python3 build_report.py nu_statement.pdf invex_statement.pdf
+  invex_statement: ⚠️  1/3 rows (33%) flagged for review
+Imported 5 new of 5 parsed from 2 file(s).
+Saved to reports/consolidated_expense_report.xlsx. DB now holds 5 transactions total.
+Bank           Category
+Invex Volaris  Uncategorized             1000.0
+Nu             Subscriptions/Software     199.0
+Invex Volaris  Transportation/Travel       95.5
+               Refunds/Adjustments       -500.0
+Nu             Refunds/Adjustments      -1000.0
+```
+
+The **Transactions** sheet holds one row per movement:
+
+| Bank  | Date       | Description        | Category               | Amount  | Type    | Review |
+|-------|------------|---------------------|-------------------------|---------|---------|--------|
+| Nu    | 2026-05-05 | NETFLIX MEXICO      | Subscriptions/Software  | 199.00  | charge  |        |
+| Nu    | 2026-05-20 | PAGO RECIBIDO GRACIAS | Refunds/Adjustments  | -1000.00| payment |        |
+| Invex Volaris | 2026-05-10 | UBER EATS MEXICO | Transportation/Travel | 95.50 | charge  |        |
+
+**Summary by Category** and **Summary by Month** are two more sheets in the
+same workbook — not static values, live `SUMIFS`/`COUNTIF` formulas against
+the Transactions sheet, so they stay correct if you edit a row by hand.
 
 ## Tests
 
@@ -71,20 +120,8 @@ statement-parser-mx/
 
 ## Adding a new bank
 
-Each parser exposes a function that takes a PDF path and returns a list of
-dicts with the keys `date` (ISO `YYYY-MM-DD`), `description`, `amount`
-(positive = charge, negative = payment) and `type`.
-
-Steps:
-
-1. Check whether the PDF has directly extractable text (`pdfplumber`) or
-   needs OCR (`pytesseract` + `pdf2image`), like Liverpool does.
-2. Write `parsers/newbank.py` with a `parse_newbank(pdf_path)` function.
-3. In `build_report.py`, add detection logic in `detect_bank()` and a
-   branch in `build_dataframe()`.
-4. **Validate the totals**: compare the sum of charges/payments you
-   extracted against the total the statement itself reports. This is the
-   key step — it's what caught OCR errors and hidden rows in earlier banks.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full checklist (parser
+shape, wiring, totals validation, and the fixture required for CI).
 
 ## Categories
 
@@ -95,6 +132,18 @@ automatically separated from real spending categories.
 Note: the keyword lists in `categorize.py` and the section markers inside
 each parser are intentionally left in Spanish, since they need to match
 the literal Spanish text printed on Mexican bank statements.
+
+## Configuration
+
+Optional. Copy `.env.example` to `.env` and adjust — every setting has a
+default that matches prior hardcoded behavior, so this is only needed to
+customize:
+
+- `STATEMENTS_DIR` / `REPORTS_DIR` — input/output folder paths.
+- `OCR_DPI` — resolution used to render PDF pages before OCR (Liverpool,
+  Banamex's fallback pass).
+- `VALIDATION_STRICT` — `true` (default) blocks import on a totals
+  mismatch; `false`/`warn` prints the same warning but always imports.
 
 ## Privacy notes
 

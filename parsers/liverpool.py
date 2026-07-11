@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING
 import pytesseract
 from pdf2image import convert_from_path
 
+import config
+
 if TYPE_CHECKING:
     from parsers.base import Transaction
 
@@ -32,7 +34,7 @@ STOP_MARKERS = [
 PAYMENT_KEYWORDS = ("GRACIAS POR SU PAGO", "SU PAGO SPEI", "SU PAGO EN")
 
 
-def ocr_pdf_pages(pdf_path: str, dpi: int = 300) -> list[str]:
+def ocr_pdf_pages(pdf_path: str, dpi: int = config.OCR_DPI) -> list[str]:
     """Renders each page to an image and runs OCR. Returns one text block per page."""
     images = convert_from_path(pdf_path, dpi=dpi)
     pages_text = []

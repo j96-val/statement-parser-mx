@@ -10,6 +10,9 @@ __pycache__/
 .venv/
 venv/
 
+# Local config overrides (see .env.example)
+.env
+
 # OS
 .DS_Store
 
