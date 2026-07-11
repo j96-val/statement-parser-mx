@@ -3,11 +3,17 @@ Liverpool credit card statement parser (PDF -> classified transactions).
 Liverpool statements embed text with a broken/custom font encoding, so
 direct text extraction fails and OCR is required instead.
 """
+from __future__ import annotations
+
 import re
 import sys
+from typing import TYPE_CHECKING
 
 import pytesseract
 from pdf2image import convert_from_path
+
+if TYPE_CHECKING:
+    from parsers.base import Transaction
 
 MONTHS = "ENE|FEB|MAR|ABR|MAY|JUN|JUL|AGO|SEP|OCT|NOV|DIC"
 DATE_RE = re.compile(rf"^\s*(\d{{1,2}})\s*[-\s]\s*({MONTHS})\b", re.IGNORECASE)
@@ -52,7 +58,9 @@ def normalize_line(line: str) -> str:
     return line
 
 
-def parse_liverpool(pdf_path: str, primary_cardholder_only: bool = True):
+def parse_liverpool(
+    pdf_path: str, primary_cardholder_only: bool = True
+) -> tuple[list[Transaction], list[str]]:
     pages_text = ocr_pdf_pages(pdf_path)
     full_text = "\n".join(pages_text)
     lines = full_text.split("\n")

@@ -2,9 +2,15 @@
 Nu credit card statement parser.
 Text is directly extractable, no OCR needed - the simplest of the four.
 """
+from __future__ import annotations
+
 import re
+from typing import TYPE_CHECKING
 
 import pdfplumber
+
+if TYPE_CHECKING:
+    from parsers.base import Transaction
 
 # NOTE: month abbreviations and the section label below are the literal
 # Spanish text printed on Nu statements, so they must stay in Spanish.
@@ -31,7 +37,7 @@ def date_to_iso(date_str: str) -> str:
     return f"{year}-{MONTHS_MAP[mon.upper()]:02d}-{int(day):02d}"
 
 
-def parse_nu(pdf_path: str):
+def parse_nu(pdf_path: str) -> list[Transaction]:
     rows = []
     with pdfplumber.open(pdf_path) as pdf:
         for page in pdf.pages:

@@ -3,11 +3,17 @@ Banamex credit card statement parser.
 Uses direct text extraction (works well) plus OCR as a fallback for
 bold rows the PDF doesn't expose as text (e.g. "SU ABONO...GRACIAS").
 """
+from __future__ import annotations
+
 import re
+from typing import TYPE_CHECKING
 
 import pdfplumber
 import pytesseract
 from pdf2image import convert_from_path
+
+if TYPE_CHECKING:
+    from parsers.base import Transaction
 
 # NOTE: month abbreviations and keywords below are the literal Spanish
 # text printed on Banamex statements, so they must stay in Spanish.
@@ -22,7 +28,9 @@ def clean_amount(raw: str) -> float:
     return float(raw.replace(",", ""))
 
 
-def extract_rows_from_text(text: str, card_type: str, seen_keys: set, dedup: bool = False):
+def extract_rows_from_text(
+    text: str, card_type: str, seen_keys: set, dedup: bool = False
+) -> tuple[list[Transaction], str]:
     """Extracts transactions from a block of text (from pdfplumber or OCR).
     Returns (rows, final_card_type) - the card type is updated line by line
     as section headers appear.
@@ -71,7 +79,7 @@ def extract_rows_from_text(text: str, card_type: str, seen_keys: set, dedup: boo
     return rows, card_type
 
 
-def parse_banamex(pdf_path: str):
+def parse_banamex(pdf_path: str) -> list[Transaction]:
     all_rows = []
     seen_keys = set()
     card_type = "primary"
