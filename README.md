@@ -59,6 +59,14 @@ python3 build_report.py path/to/one_statement.pdf path/to/another.pdf
 The bank for each PDF is auto-detected (by filename or content) — you can
 freely mix banks and months in the same run.
 
+**Liverpool filenames must include the cut-off date**, as
+`liverpool-YYYY-MM-DD.pdf` (e.g. `liverpool-2026-05-25.pdf`). Liverpool's
+statement doesn't print a cut-off date anywhere in the PDF (OCR-only, no
+"Fecha de corte" line), so the parser has no other way to know which period a
+file belongs to — used for statement-history tracking (duplicate/continuity
+checks). Every other bank prints its own cut-off date and needs no filename
+convention beyond containing the bank's name (see `detect_bank()`).
+
 ## Example output
 
 Sample run against two files (fake data, not a real statement):

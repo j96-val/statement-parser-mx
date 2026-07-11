@@ -38,6 +38,12 @@ backwards and every downstream category/summary breaks.
    - `detect_bank()`: add a filename check and a page-content fallback
      (bank logos are usually images, so match the company name printed on
      an inner page instead).
+   - If your bank's PDF never prints a cut-off date anywhere (OCR-only
+     banks are the likely case), require it in the filename instead - see
+     Liverpool's `BANK-YYYY-MM-DD.pdf` convention in `README.md` and
+     `guess_year_from_filename()` in `build_report.py`. Statement-level
+     tracking (duplicate/continuity checks) needs a cut-off date from
+     somewhere.
    - `build_dataframe()`: add a branch for your bank. Convert dates to ISO
      here (add a converter if your date format isn't already handled) and
      decide which parser key maps to the `Review` flag - see Liverpool's
