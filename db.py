@@ -37,6 +37,22 @@ CREATE TABLE IF NOT EXISTS category_overrides (
     category TEXT NOT NULL,
     created_at TEXT
 );
+CREATE TABLE IF NOT EXISTS statements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    bank TEXT NOT NULL,
+    card TEXT,
+    period_start TEXT,
+    period_end TEXT,
+    cutoff_date TEXT,
+    prev_balance REAL,
+    closing_balance REAL,
+    min_payment REAL,
+    no_interest_payment REAL,
+    credit_limit REAL,
+    source_file TEXT,
+    statement_key TEXT UNIQUE,
+    imported_at TEXT
+);
 """
 
 # Phase 4.1/4.2 columns, added to `transactions` after the base CREATE above.
@@ -91,6 +107,30 @@ def make_dedup_key(bank, date, description, amount, source_file, occ) -> str:
     return hashlib.sha1(raw.encode()).hexdigest()
 
 
+def statement_identity(card: str | None, credit_limit: float | None) -> str | None:
+    # Card last-4 is the natural identifier for telling two accounts at the
+    # same bank apart. Banamex never exposes it in text (the digits render
+    # as an image), so two different Banamex cards can otherwise collide on
+    # bank+cutoff_date alone (seen with two real statements: $18,500 vs
+    # $38,500 limits, same cutoff date). credit_limit is a stable per-card
+    # fallback in that case. If neither is available (Liverpool, Santander -
+    # no printed limit), identity is None and statements from a second
+    # account at that bank on the same cutoff date would collide.
+    # ponytail: no known case of that yet; revisit if it happens.
+    if card is not None:
+        return f"card:{card}"
+    if credit_limit is not None:
+        return f"limit:{credit_limit}"
+    return None
+
+
+def make_statement_key(bank: str, identity: str | None, cutoff_date: str | None, period_end: str | None) -> str:
+    # cutoff_date is preferred; period_end is the fallback for a bank/file
+    # where cutoff extraction failed but the period still parsed.
+    raw = f"{bank}|{identity}|{cutoff_date or period_end}"
+    return hashlib.sha1(raw.encode()).hexdigest()
+
+
 def apply_override(conn: sqlite3.Connection, description: str, fallback: str) -> str:
     row = conn.execute(
         "SELECT category FROM category_overrides WHERE ? LIKE merchant_pattern LIMIT 1",
@@ -128,6 +168,66 @@ def insert_transactions(conn: sqlite3.Connection, rows: list[dict]) -> int:
         inserted += cur.rowcount
     conn.commit()
     return inserted
+
+
+def insert_statements(conn: sqlite3.Connection, rows: list[dict]) -> tuple[int, list[dict]]:
+    """Returns (inserted_count, duplicate_rows). A duplicate is a statement
+    whose (bank, card, cutoff) key already exists - INSERT OR IGNORE left it
+    untouched, meaning this exact statement was already imported."""
+    inserted = 0
+    duplicates = []
+    now = datetime.now().isoformat()
+    for r in rows:
+        identity = statement_identity(r.get("Card"), r.get("CreditLimit"))
+        key = make_statement_key(r["Bank"], identity, r.get("CutoffDate"), r.get("PeriodEnd"))
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO statements
+               (bank, card, period_start, period_end, cutoff_date, prev_balance,
+                closing_balance, min_payment, no_interest_payment, credit_limit,
+                source_file, statement_key, imported_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (r["Bank"], r.get("Card"), r.get("PeriodStart"), r.get("PeriodEnd"),
+             r.get("CutoffDate"), r.get("PrevBalance"), r.get("ClosingBalance"),
+             r.get("MinPayment"), r.get("NoInterestPayment"), r.get("CreditLimit"),
+             r.get("File"), key, now),
+        )
+        if cur.rowcount:
+            inserted += 1
+        else:
+            duplicates.append(r)
+    conn.commit()
+    return inserted, duplicates
+
+
+def latest_statement(
+    conn: sqlite3.Connection, bank: str, card: str | None, credit_limit: float | None, before_cutoff: str | None
+) -> sqlite3.Row | None:
+    """Most recent statement for the same (bank, identity) strictly before
+    before_cutoff - the one validate.check_continuity compares against.
+    Mirrors statement_identity()'s card-then-credit_limit fallback."""
+    if card is not None:
+        query = "SELECT * FROM statements WHERE bank = ? AND card = ?"
+        params = [bank, card]
+    else:
+        query = "SELECT * FROM statements WHERE bank = ? AND card IS NULL AND credit_limit IS ?"
+        params = [bank, credit_limit]
+    if before_cutoff:
+        query += " AND cutoff_date < ?"
+        params.append(before_cutoff)
+    query += " ORDER BY cutoff_date DESC LIMIT 1"
+    return conn.execute(query, params).fetchone()
+
+
+def fetch_statements(conn: sqlite3.Connection) -> pd.DataFrame:
+    return pd.read_sql_query(
+        """SELECT bank AS Bank, card AS Card, period_start AS PeriodStart,
+                  period_end AS PeriodEnd, cutoff_date AS CutoffDate,
+                  prev_balance AS PrevBalance, closing_balance AS ClosingBalance,
+                  min_payment AS MinPayment, no_interest_payment AS NoInterestPayment,
+                  credit_limit AS CreditLimit, source_file AS File
+           FROM statements ORDER BY cutoff_date, id""",
+        conn,
+    )
 
 
 def fetch_dataframe(conn: sqlite3.Connection) -> pd.DataFrame:
