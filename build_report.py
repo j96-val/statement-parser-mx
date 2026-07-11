@@ -23,6 +23,8 @@ from parsers.nu import parse_nu
 from parsers.banorte import parse_banorte
 from parsers.santander import parse_santander
 from categorize import categorize
+from enrich import normalize_merchant, day_of_week_info
+from msi_debt import active_msi, monthly_projection
 import config
 import db
 import validate
@@ -149,6 +151,8 @@ def build_rows(pdf_paths: list[str]) -> tuple[list[dict], list[str]]:
                     "Amount": t["amount"],
                     "Type": t["type"],
                     "Review": "YES" if t.get("source") == "ocr_fallback" else "",
+                    "ChargeDate": dashed_date_to_iso(t["charge_date"]) if t.get("charge_date") else None,
+                    "Card": t.get("card"),
                 })
         elif bank == "invex":
             txns = parse_invex(pdf_path)
@@ -164,6 +168,13 @@ def build_rows(pdf_paths: list[str]) -> tuple[list[dict], list[str]]:
                     "Type": t["type"],
                     "Review": "YES" if t.get("is_installment") else "",
                     "is_installment": t.get("is_installment", False),
+                    "ChargeDate": dashed_date_to_iso(t["charge_date"]) if t.get("charge_date") else None,
+                    "StatementDate": dashed_date_to_iso(t["statement_date"]) if t.get("statement_date") else None,
+                    "InstallmentNum": t.get("installment_num"),
+                    "InstallmentTotal": t.get("installment_total"),
+                    "OriginalAmount": t.get("original_amount"),
+                    "RemainingBalance": t.get("remaining_balance"),
+                    "Rate": t.get("rate"),
                 })
         elif bank == "nu":
             txns = parse_nu(pdf_path)
@@ -192,6 +203,7 @@ def build_rows(pdf_paths: list[str]) -> tuple[list[dict], list[str]]:
                     "Amount": t["amount"],
                     "Type": t["type"],
                     "Review": "",
+                    "ChargeDate": dashed_date_to_iso(t["charge_date"]) if t.get("charge_date") else None,
                 })
         elif bank == "santander":
             txns, ocr_text = parse_santander(pdf_path)
@@ -213,6 +225,8 @@ def build_rows(pdf_paths: list[str]) -> tuple[list[dict], list[str]]:
 
         for r in file_rows:
             r["Month"] = r["Date"][:7]  # YYYY-MM
+            r["DayOfWeek"], r["IsWeekend"] = day_of_week_info(r["Date"])
+            r["MerchantNorm"] = normalize_merchant(r["Description"])
 
         ok, messages = validate.validate_file(bank, file_rows, pdf_path, ocr_text)
         for m in messages:
@@ -300,6 +314,95 @@ def write_excel(df: pd.DataFrame, out_path: str):
         ws3.column_dimensions["A"].width = 14
         ws3.column_dimensions["B"].width = 22
         ws3.column_dimensions["C"].width = 22
+
+    # --- Sheet 4: Top Merchants (charges only) ---
+    if "MerchantNorm" in headers and len(df):
+        merchant_col = get_column_letter(headers.index("MerchantNorm") + 1)
+        type_col = get_column_letter(headers.index("Type") + 1)
+        ws4 = wb.create_sheet("Top Merchants")
+        ws4.append(["Merchant", "Total Charged", "# Transactions"])
+        for cell in ws4[1]:
+            cell.font = Font(bold=True, color="FFFFFF", name="Arial")
+            cell.fill = PatternFill("solid", fgColor="4472C4")
+        # sort by actual spend so the highest merchants land on top; the
+        # cells themselves stay live SUMIFS/COUNTIFS formulas.
+        merchants = list(
+            df[df["Type"] == "charge"].groupby("MerchantNorm")["Amount"]
+            .sum().sort_values(ascending=False).index
+        )
+        for i, merch in enumerate(merchants, start=2):
+            ws4.cell(row=i, column=1, value=merch)
+            ws4.cell(row=i, column=2,
+                      value=(f'=SUMIFS(Transactions!{amount_col}2:{amount_col}{n},'
+                             f'Transactions!{merchant_col}2:{merchant_col}{n},A{i},'
+                             f'Transactions!{type_col}2:{type_col}{n},"charge")'))
+            ws4.cell(row=i, column=2).number_format = "$#,##0.00"
+            ws4.cell(row=i, column=3,
+                      value=(f'=COUNTIFS(Transactions!{merchant_col}2:{merchant_col}{n},A{i},'
+                             f'Transactions!{type_col}2:{type_col}{n},"charge")'))
+        ws4.column_dimensions["A"].width = 32
+        ws4.column_dimensions["B"].width = 16
+        ws4.column_dimensions["C"].width = 16
+
+    # --- Sheet 5: Average ticket per category (charges only) ---
+    if len(df):
+        type_col = get_column_letter(headers.index("Type") + 1)
+        ws5 = wb.create_sheet("Avg Ticket by Category")
+        ws5.append(["Category", "Avg Charge", "# Charges"])
+        for cell in ws5[1]:
+            cell.font = Font(bold=True, color="FFFFFF", name="Arial")
+            cell.fill = PatternFill("solid", fgColor="4472C4")
+        for i, cat in enumerate(categories, start=2):
+            ws5.cell(row=i, column=1, value=cat)
+            ws5.cell(row=i, column=2,
+                      value=(f'=AVERAGEIFS(Transactions!{amount_col}2:{amount_col}{n},'
+                             f'Transactions!{category_col}2:{category_col}{n},A{i},'
+                             f'Transactions!{type_col}2:{type_col}{n},"charge")'))
+            ws5.cell(row=i, column=2).number_format = "$#,##0.00"
+            ws5.cell(row=i, column=3,
+                      value=(f'=COUNTIFS(Transactions!{category_col}2:{category_col}{n},A{i},'
+                             f'Transactions!{type_col}2:{type_col}{n},"charge")'))
+        ws5.column_dimensions["A"].width = 32
+        ws5.column_dimensions["B"].width = 16
+        ws5.column_dimensions["C"].width = 16
+
+    # --- Sheet 6: Committed MSI debt (Phase 4.3) - precomputed, not SUMIFS:
+    # it's a forward projection over future months that have no transaction
+    # rows yet, so there's nothing for a live formula to sum. ---
+    if "InstallmentTotal" in headers and len(df):
+        active = active_msi(df)
+        if len(active):
+            ws6 = wb.create_sheet("Committed MSI Debt")
+            ws6.append(["Bank", "Merchant", "Monthly Amount", "Installment", "End Month"])
+            for cell in ws6[1]:
+                cell.font = Font(bold=True, color="FFFFFF", name="Arial")
+                cell.fill = PatternFill("solid", fgColor="4472C4")
+            row_i = 2
+            for _, r in active.iterrows():
+                ws6.cell(row=row_i, column=1, value=r["Bank"])
+                ws6.cell(row=row_i, column=2, value=r["Description"])
+                ws6.cell(row=row_i, column=3, value=r["Amount"])
+                ws6.cell(row=row_i, column=3).number_format = "$#,##0.00"
+                ws6.cell(row=row_i, column=4, value=f'{int(r["InstallmentNum"])}/{int(r["InstallmentTotal"])}')
+                ws6.cell(row=row_i, column=5, value=r["EndMonth"])
+                row_i += 1
+            ws6.column_dimensions["A"].width = 14
+            ws6.column_dimensions["B"].width = 32
+            ws6.column_dimensions["C"].width = 16
+            ws6.column_dimensions["D"].width = 12
+            ws6.column_dimensions["E"].width = 12
+
+            projection = monthly_projection(active)
+            if projection:
+                row_i += 1
+                ws6.cell(row=row_i, column=1, value="Month").font = Font(bold=True)
+                ws6.cell(row=row_i, column=2, value="Total Committed").font = Font(bold=True)
+                row_i += 1
+                for month, total in projection:
+                    ws6.cell(row=row_i, column=1, value=month)
+                    ws6.cell(row=row_i, column=2, value=total)
+                    ws6.cell(row=row_i, column=2).number_format = "$#,##0.00"
+                    row_i += 1
 
     wb.save(out_path)
 
