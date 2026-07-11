@@ -1,0 +1,103 @@
+# statement-parser-mx
+
+Reads your Mexican credit card statements in PDF (Liverpool, Banamex, Invex
+Volaris, Nu), extracts the transactions, categorizes them, and generates a
+consolidated Excel report with a summary by category and by month.
+
+## Installation
+
+```bash
+# 1. Install Python dependencies
+pip install -r requirements.txt
+
+# 2. Install Tesseract OCR (needed for Liverpool, whose PDF doesn't expose text)
+#    macOS:
+brew install tesseract poppler
+#    Ubuntu/Debian:
+sudo apt install tesseract-ocr poppler-utils
+#    Windows: install from https://github.com/UB-Mannheim/tesseract/wiki
+#             and poppler from https://github.com/oschwartz10612/poppler-windows
+```
+
+## Usage
+
+1. Drop your PDFs into `statements/`
+2. Run:
+
+```bash
+python3 build_report.py
+```
+
+3. The Excel file lands in `reports/consolidated_expense_report.xlsx`
+
+You can also pass specific files as arguments:
+
+```bash
+python3 build_report.py path/to/one_statement.pdf path/to/another.pdf
+```
+
+The bank for each PDF is auto-detected (by filename or content) — you can
+freely mix banks and months in the same run.
+
+## Tests
+
+Unit tests cover the parsing logic (regexes, amount/date handling,
+categorization) with synthetic strings — no PDFs required:
+
+```bash
+python3 tests/test_parsers.py    # runs with only the requirements.txt deps
+# or, if you have pytest:
+pytest tests/
+```
+
+These catch logic regressions. They do **not** replace **totals
+reconciliation** against a real statement, which is the only way to catch
+OCR/extraction errors — see "Adding a new bank" below.
+
+## Structure
+
+```
+statement-parser-mx/
+├── parsers/             # one module per bank: PDF -> list of transactions
+│   ├── liverpool.py      # needs OCR (the PDF's font encoding is broken)
+│   ├── banamex.py        # direct text + OCR fallback for bold rows
+│   ├── invex.py          # direct text, handles MSI (interest-free installments)
+│   └── nu.py             # direct text, the simplest of the four
+├── categorize.py         # keyword-based categorization rules
+├── build_report.py       # master pipeline: detects bank, runs everything, builds the Excel
+├── statements/           # (gitignored) your PDFs go here
+└── reports/              # (gitignored) generated Excel files land here
+```
+
+## Adding a new bank
+
+Each parser exposes a function that takes a PDF path and returns a list of
+dicts with the keys `date` (ISO `YYYY-MM-DD`), `description`, `amount`
+(positive = charge, negative = payment) and `type`.
+
+Steps:
+
+1. Check whether the PDF has directly extractable text (`pdfplumber`) or
+   needs OCR (`pytesseract` + `pdf2image`), like Liverpool does.
+2. Write `parsers/newbank.py` with a `parse_newbank(pdf_path)` function.
+3. In `build_report.py`, add detection logic in `detect_bank()` and a
+   branch in `build_dataframe()`.
+4. **Validate the totals**: compare the sum of charges/payments you
+   extracted against the total the statement itself reports. This is the
+   key step — it's what caught OCR errors and hidden rows in earlier banks.
+
+## Categories
+
+Editable in `categorize.py`, matched by keywords found in each
+transaction's description. Card payments and merchant refunds are
+automatically separated from real spending categories.
+
+Note: the keyword lists in `categorize.py` and the section markers inside
+each parser are intentionally left in Spanish, since they need to match
+the literal Spanish text printed on Mexican bank statements.
+
+## Privacy notes
+
+Statement PDFs and generated Excel files contain personal financial
+information — `.gitignore` excludes them from the repository. The code
+itself is safe to share; your statements are not.
