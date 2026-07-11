@@ -5,9 +5,15 @@ Handles two sections:
   1. Purchases deferred to interest-free monthly installments (MSI)
   2. Regular charges, payments and purchases (not on installments)
 """
+from __future__ import annotations
+
 import re
+from typing import TYPE_CHECKING
 
 import pdfplumber
+
+if TYPE_CHECKING:
+    from parsers.base import Transaction
 
 # NOTE: month abbreviations and section labels below are the literal
 # Spanish text printed on INVEX statements, so they must stay in Spanish.
@@ -39,7 +45,7 @@ def get_statement_date(pdf) -> str | None:
     return None
 
 
-def parse_invex(pdf_path: str):
+def parse_invex(pdf_path: str) -> list[Transaction]:
     rows = []
     with pdfplumber.open(pdf_path) as pdf:
         statement_date = get_statement_date(pdf)

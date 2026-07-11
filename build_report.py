@@ -5,6 +5,7 @@ them, and generates a single consolidated Excel workbook with a
 transactions view + summary by category + summary by month.
 """
 import re
+import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +21,8 @@ from parsers.banamex import parse_banamex
 from parsers.invex import parse_invex
 from parsers.nu import parse_nu
 from categorize import categorize
+import db
+import validate
 
 # NOTE: kept in Spanish because these are the literal month abbreviations
 # printed on the statements themselves (used as dict keys for lookup).
@@ -95,18 +98,21 @@ def guess_year_from_filename(pdf_path: str) -> int:
     return datetime.now().year
 
 
-def build_dataframe(pdf_paths: list[str]) -> pd.DataFrame:
+def build_rows(pdf_paths: list[str]) -> tuple[list[dict], list[str]]:
     rows = []
+    imported_paths = []
     for pdf_path in pdf_paths:
         bank = detect_bank(pdf_path)
         fname = Path(pdf_path).stem
+        ocr_text = None
+        file_rows = []
 
         if bank == "liverpool":
             year = guess_year_from_filename(pdf_path)
-            txns, _ = parse_liverpool(pdf_path)
+            txns, _, ocr_text = parse_liverpool(pdf_path)
             for t in txns:
                 cat = categorize(t["description"], t["amount"])
-                rows.append({
+                file_rows.append({
                     "Bank": "Liverpool",
                     "File": fname,
                     "Date": liverpool_date_to_iso(t["date"], year),
@@ -120,7 +126,7 @@ def build_dataframe(pdf_paths: list[str]) -> pd.DataFrame:
             txns = parse_banamex(pdf_path)
             for t in txns:
                 cat = categorize(t["description"], t["amount"])
-                rows.append({
+                file_rows.append({
                     "Bank": "Banamex",
                     "File": fname,
                     "Date": dashed_date_to_iso(t["date"]),
@@ -134,7 +140,7 @@ def build_dataframe(pdf_paths: list[str]) -> pd.DataFrame:
             txns = parse_invex(pdf_path)
             for t in txns:
                 cat = categorize(t["description"], t["amount"])
-                rows.append({
+                file_rows.append({
                     "Bank": "Invex Volaris",
                     "File": fname,
                     "Date": dashed_date_to_iso(t["date"]),
@@ -143,12 +149,13 @@ def build_dataframe(pdf_paths: list[str]) -> pd.DataFrame:
                     "Amount": t["amount"],
                     "Type": t["type"],
                     "Review": "YES" if t.get("is_installment") else "",
+                    "is_installment": t.get("is_installment", False),
                 })
         elif bank == "nu":
             txns = parse_nu(pdf_path)
             for t in txns:
                 cat = categorize(t["description"], t["amount"])
-                rows.append({
+                file_rows.append({
                     "Bank": "Nu",
                     "File": fname,
                     "Date": t["date"],
@@ -160,11 +167,21 @@ def build_dataframe(pdf_paths: list[str]) -> pd.DataFrame:
                 })
         else:
             print(f"⚠️  Could not identify the bank for: {pdf_path} (skipped)")
+            continue
 
-    df = pd.DataFrame(rows)
-    if len(df):
-        df["Month"] = df["Date"].str.slice(0, 7)  # YYYY-MM
-    return df
+        for r in file_rows:
+            r["Month"] = r["Date"][:7]  # YYYY-MM
+
+        ok, messages = validate.validate_file(bank, file_rows, pdf_path, ocr_text)
+        for m in messages:
+            print(f"  {fname}: {m}")
+        if ok:
+            rows.extend(file_rows)
+            imported_paths.append(pdf_path)
+        else:
+            print(f"⛔ {fname}: failed validation, not imported")
+
+    return rows, imported_paths
 
 
 def write_excel(df: pd.DataFrame, out_path: str):
@@ -257,11 +274,30 @@ if __name__ == "__main__":
             sys.exit(1)
         print(f"Processing {len(pdf_paths)} PDF(s) from {folder}/ ...")
 
-    df = build_dataframe(pdf_paths)
+    rows, imported_paths = build_rows(pdf_paths)
+    conn = db.connect()
+    db.init_db(conn)
+    n_new = db.insert_transactions(conn, rows)
+    df = db.fetch_dataframe(conn)
+
     out_dir = Path(__file__).parent / "reports"
     out_dir.mkdir(exist_ok=True)
     out = str(out_dir / "consolidated_expense_report.xlsx")
     write_excel(df, out)
-    print(f"Saved to {out}. {len(df)} transactions from {len(pdf_paths)} file(s).")
+    print(f"Imported {n_new} new of {len(rows)} parsed from {len(pdf_paths)} file(s).")
+    print(f"Saved to {out}. DB now holds {len(df)} transactions total.")
     if len(df):
         print(df.groupby(["Bank", "Category"])["Amount"].sum().sort_values(ascending=False))
+
+    # validated + inserted PDFs move out of statements/ so the next run
+    # doesn't re-scan them; original file is kept (not deleted) for re-extraction
+    # if a parser bug is found later - see ROADMAP.md 1.4.
+    processed_dir = Path(__file__).parent / "statements" / "processed"
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    for pdf_path in imported_paths:
+        src = Path(pdf_path)
+        if src.resolve().parent == processed_dir.resolve():
+            continue
+        shutil.move(str(src), str(processed_dir / src.name))
+    if imported_paths:
+        print(f"Moved {len(imported_paths)} processed PDF(s) to {processed_dir}/")
