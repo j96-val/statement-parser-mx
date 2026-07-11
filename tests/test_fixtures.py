@@ -71,6 +71,19 @@ def test_invex_fixture_parses_and_reconciles():
     installment_rows = [r for r in rows if r["is_installment"]]
     assert len(installment_rows) == 1
     assert installment_rows[0]["amount"] == 1000.00
+    # Phase 4.1: installment metadata now lives in its own columns, and the
+    # description no longer carries the "(installment N de M)" suffix.
+    inst = installment_rows[0]
+    assert inst["description"] == "LAPTOP DELL MSI"
+    assert inst["installment_num"] == 2 and inst["installment_total"] == 12
+    assert inst["original_amount"] == 12000.00
+    assert inst["remaining_balance"] == 10000.00
+    assert inst["rate"] == 1.5
+    assert inst["statement_date"] == "25-may-2026"
+
+    regular_rows = [r for r in rows if not r["is_installment"]]
+    assert all(r.get("charge_date") for r in regular_rows)
+    assert all(r.get("statement_date") == "25-may-2026" for r in regular_rows)
 
     val_rows = [
         {"Amount": r["amount"], "Description": r["description"], "Review": "", "is_installment": r["is_installment"]}
@@ -93,6 +106,7 @@ def test_banorte_fixture_parses_and_reconciles():
     rows = parse_banorte(path)
     fx = FIXTURES["banorte"]
     assert len(rows) == fx["expected_rows"]
+    assert all(r.get("charge_date") for r in rows)  # Phase 4.1: plumbed through
     charges = sum(r["amount"] for r in rows if r["amount"] > 0)
     payments = sum(r["amount"] for r in rows if r["amount"] < 0)
     assert charges == fx["expected_charges"]

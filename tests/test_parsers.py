@@ -19,6 +19,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from categorize import categorize
 from parsers import banamex, invex, liverpool, nu, banorte, santander
 import build_report
+import enrich
+import msi_debt
 
 
 # --- categorize.py -----------------------------------------------------------
@@ -90,6 +92,12 @@ def test_banamex_sign_and_type():
     rows, _ = banamex.extract_rows_from_text(
         "10-ene-2026 10-ene-2026 SU PAGO - $1,000.00\n", "primary", set(), dedup=False)
     assert rows[0]["amount"] == -1000.00 and rows[0]["type"] == "payment"
+
+def test_banamex_charge_date_plumbed():
+    # Phase 4.1: charge_date (2nd date column) is captured, not discarded.
+    rows, _ = banamex.extract_rows_from_text(
+        "05-ene-2026 06-ene-2026 OXXO TIENDA 123 + $50.00\n", "primary", set(), dedup=False)
+    assert rows[0]["charge_date"] == "06-ene-2026"
 
 
 # --- Nu ----------------------------------------------------------------------
@@ -173,6 +181,57 @@ def test_santander_resolve_sign_flags_zero_delta():
     # corrupted the balance column
     _, needs_review = santander.resolve_sign(amount=100.0, delta=0.0)
     assert needs_review is True
+
+
+# --- Phase 4.2: derived columns (enrich.py) ----------------------------------
+
+def test_normalize_merchant_strips_gateway_prefix():
+    assert enrich.normalize_merchant("MERPAGO*STARBUCKS COYOACAN") == "STARBUCKS COYOACAN"
+    assert enrich.normalize_merchant("PAYPAL *NETFLIX") == "NETFLIX"
+
+def test_normalize_merchant_passthrough_plain_merchant():
+    assert enrich.normalize_merchant("WALMART SUPERCENTER") == "WALMART SUPERCENTER"
+
+def test_day_of_week_info_weekend():
+    # 2026-07-11 is a Saturday
+    name, is_weekend = enrich.day_of_week_info("2026-07-11")
+    assert name == "Saturday" and is_weekend is True
+
+def test_day_of_week_info_weekday():
+    # 2026-07-06 is a Monday
+    name, is_weekend = enrich.day_of_week_info("2026-07-06")
+    assert name == "Monday" and is_weekend is False
+
+
+# --- Phase 4.3: MSI debt projection (msi_debt.py) ----------------------------
+
+def _msi_df():
+    import pandas as pd
+    # Two snapshots of the same purchase (installment_num rising 2 -> 3) plus
+    # one finished MSI (num == total) that must NOT show up as active.
+    return pd.DataFrame([
+        {"Bank": "Invex Volaris", "Description": "LAPTOP DELL MSI",
+         "InstallmentTotal": 6, "InstallmentNum": 2, "OriginalAmount": 12000.0,
+         "StatementDate": "2026-04-25", "Amount": 1000.0},
+        {"Bank": "Invex Volaris", "Description": "LAPTOP DELL MSI",
+         "InstallmentTotal": 6, "InstallmentNum": 3, "OriginalAmount": 12000.0,
+         "StatementDate": "2026-05-25", "Amount": 1000.0},
+        {"Bank": "Invex Volaris", "Description": "FINISHED ITEM",
+         "InstallmentTotal": 3, "InstallmentNum": 3, "OriginalAmount": 900.0,
+         "StatementDate": "2026-05-25", "Amount": 300.0},
+    ])
+
+def test_active_msi_keeps_latest_snapshot_only():
+    active = msi_debt.active_msi(_msi_df())
+    assert len(active) == 1  # FINISHED ITEM excluded, only latest LAPTOP snapshot kept
+    row = active.iloc[0]
+    assert row["InstallmentNum"] == 3 and row["Remaining"] == 3
+    assert row["EndMonth"] == "2026-08"
+
+def test_monthly_projection_sums_committed_amount():
+    active = msi_debt.active_msi(_msi_df())
+    projection = msi_debt.monthly_projection(active)
+    assert projection == [("2026-06", 1000.0), ("2026-07", 1000.0), ("2026-08", 1000.0)]
 
 
 # --- build_report: date helpers + C3 (detect_bank NU token match) -----------

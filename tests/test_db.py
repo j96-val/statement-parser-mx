@@ -73,6 +73,24 @@ def test_category_override_applied():
     assert cats["STARBUCKS COYOACAN"] == "Restaurants"           # untouched
 
 
+# --- Phase 4.1: schema migration adds new columns to an existing DB ---------
+
+def test_migrate_adds_new_columns_idempotently():
+    conn = db.connect(":memory:")
+    # simulate a pre-Phase-4 DB: base schema only, no migrate() call yet
+    conn.executescript(db.SCHEMA)
+    conn.commit()
+    before = {row["name"] for row in conn.execute("PRAGMA table_info(transactions)")}
+    assert "charge_date" not in before
+
+    db.migrate(conn)
+    after = {row["name"] for row in conn.execute("PRAGMA table_info(transactions)")}
+    for col in db.NEW_COLUMNS:
+        assert col in after
+
+    db.migrate(conn)  # second call must not raise (duplicate ALTER COLUMN)
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items())
            if k.startswith("test_") and callable(v)]
