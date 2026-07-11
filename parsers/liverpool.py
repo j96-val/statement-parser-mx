@@ -9,10 +9,7 @@ import re
 import sys
 from typing import TYPE_CHECKING
 
-import pytesseract
-from pdf2image import convert_from_path
-
-import config
+from parsers.base import clean_amount, ocr_pdf_pages
 
 if TYPE_CHECKING:
     from parsers.base import Transaction
@@ -32,21 +29,6 @@ STOP_MARKERS = [
 # NOTE: these phrases are the literal Spanish text printed on Liverpool
 # statements, so they must stay in Spanish for the matching to work.
 PAYMENT_KEYWORDS = ("GRACIAS POR SU PAGO", "SU PAGO SPEI", "SU PAGO EN")
-
-
-def ocr_pdf_pages(pdf_path: str, dpi: int = config.OCR_DPI) -> list[str]:
-    """Renders each page to an image and runs OCR. Returns one text block per page."""
-    images = convert_from_path(pdf_path, dpi=dpi)
-    pages_text = []
-    for img in images:
-        text = pytesseract.image_to_string(img, lang="eng")
-        pages_text.append(text)
-    return pages_text
-
-
-def clean_amount(raw: str) -> float:
-    raw = raw.replace(" ", "").replace(",", "")
-    return float(raw)
 
 
 def normalize_line(line: str) -> str:

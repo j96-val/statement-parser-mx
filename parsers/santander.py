@@ -31,10 +31,7 @@ import re
 import sys
 from typing import TYPE_CHECKING
 
-import pytesseract
-from pdf2image import convert_from_path
-
-import config
+from parsers.base import clean_amount, ocr_pdf_pages as _ocr_pdf_pages
 
 if TYPE_CHECKING:
     from parsers.base import Transaction
@@ -55,13 +52,8 @@ PREV_BALANCE_RE = re.compile(
 BALANCE_TOLERANCE = 0.01  # pesos; absorbs float rounding only
 
 
-def ocr_pdf_pages(pdf_path: str, dpi: int = config.OCR_DPI) -> list[str]:
-    images = convert_from_path(pdf_path, dpi=dpi)
-    return [pytesseract.image_to_string(img, lang="eng", config="--psm 6") for img in images]
-
-
-def clean_amount(raw: str) -> float:
-    return float(raw.replace(",", ""))
+def ocr_pdf_pages(pdf_path: str) -> list[str]:
+    return _ocr_pdf_pages(pdf_path, tesseract_config="--psm 6")
 
 
 def resolve_sign(amount: float, delta: float) -> tuple[float, bool]:

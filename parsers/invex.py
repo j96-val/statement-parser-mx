@@ -12,17 +12,12 @@ from typing import TYPE_CHECKING
 
 import pdfplumber
 
+from parsers.base import MONTHS, ROW_REGULAR_RE_SRC, clean_amount
+
 if TYPE_CHECKING:
     from parsers.base import Transaction
 
-# NOTE: month abbreviations and section labels below are the literal
-# Spanish text printed on INVEX statements, so they must stay in Spanish.
-MONTHS = "ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic"
-
-ROW_REGULAR_RE = re.compile(
-    rf"^(\d{{2}}-(?:{MONTHS})-\d{{4}})\s+(\d{{2}}-(?:{MONTHS})-\d{{4}})\s+(.+?)\s*([+-])\s*\$?\s*([\d,]+\.\d{{2}})\s*$",
-    re.IGNORECASE,
-)
+ROW_REGULAR_RE = re.compile(ROW_REGULAR_RE_SRC, re.IGNORECASE)
 
 ROW_INSTALLMENT_RE = re.compile(
     rf"^(\d{{2}}-(?:{MONTHS})-\d{{4}})\s+(.+?)\s+\$([\d,]+\.\d{{2}})\s+\$([\d,]+\.\d{{2}})\s+"
@@ -31,9 +26,6 @@ ROW_INSTALLMENT_RE = re.compile(
 )
 
 STATEMENT_DATE_RE = re.compile(r"Fecha de [Cc]orte:?\s*(\d{2}-\w{3}-\d{4})", re.IGNORECASE)
-
-def clean_amount(raw: str) -> float:
-    return float(raw.replace(",", ""))
 
 
 def get_statement_date(pdf) -> str | None:

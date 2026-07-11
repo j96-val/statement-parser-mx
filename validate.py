@@ -26,10 +26,9 @@ TOLERANCE = 1.00  # pesos; absorbs rounding/cents noise, not real discrepancies
 
 NU_CHARGES_RE = re.compile(r"Cargos regulares \(no a meses\)\s*\+\s*\$?([\d,]+\.\d{2})", re.IGNORECASE)
 NU_PAYMENTS_RE = re.compile(r"Pagos y abonos\s*-\s*\$?([\d,]+\.\d{2})", re.IGNORECASE)
-INVEX_CHARGES_RE = re.compile(r"Total cargos\s*\+\s*\$?([\d,]+\.\d{2})", re.IGNORECASE)
-INVEX_PAYMENTS_RE = re.compile(r"Total abonos\s*-\s*\$?([\d,]+\.\d{2})", re.IGNORECASE)
-BANORTE_CHARGES_RE = re.compile(r"Total cargos\s*\+\s*\$?([\d,]+\.\d{2})", re.IGNORECASE)
-BANORTE_PAYMENTS_RE = re.compile(r"Total abonos\s*-\s*\$?([\d,]+\.\d{2})", re.IGNORECASE)
+# Invex and Banorte print the identical "Total cargos"/"Total abonos" labels.
+TOTAL_CARGOS_RE = re.compile(r"Total cargos\s*\+\s*\$?([\d,]+\.\d{2})", re.IGNORECASE)
+TOTAL_ABONOS_RE = re.compile(r"Total abonos\s*-\s*\$?([\d,]+\.\d{2})", re.IGNORECASE)
 # Santander's "Cuenta de cheques." summary block (Depositos/Retiros for the
 # checking sub-account) prints before the "Dinero Creciente" (savings)
 # sub-account's own Depositos/Retiros recap further down the OCR'd text, so a
@@ -155,17 +154,11 @@ def extract_printed_totals(bank: str, pdf_path: str, ocr_text: str | None = None
             "charges": _search(NU_CHARGES_RE, text),
             "payments": _search(NU_PAYMENTS_RE, text, negate=True),
         }
-    if bank == "invex":
+    if bank in ("invex", "banorte"):
         text = _pdf_text(pdf_path)
         return {
-            "charges": _search(INVEX_CHARGES_RE, text),
-            "payments": _search(INVEX_PAYMENTS_RE, text, negate=True),
-        }
-    if bank == "banorte":
-        text = _pdf_text(pdf_path)
-        return {
-            "charges": _search(BANORTE_CHARGES_RE, text),
-            "payments": _search(BANORTE_PAYMENTS_RE, text, negate=True),
+            "charges": _search(TOTAL_CARGOS_RE, text),
+            "payments": _search(TOTAL_ABONOS_RE, text, negate=True),
         }
     if bank == "liverpool":
         return _liverpool_subtotal(ocr_text or "")

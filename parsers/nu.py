@@ -9,12 +9,10 @@ from typing import TYPE_CHECKING
 
 import pdfplumber
 
+from parsers.base import MONTHS, SPANISH_MONTHS, clean_amount
+
 if TYPE_CHECKING:
     from parsers.base import Transaction
-
-# NOTE: month abbreviations and the section label below are the literal
-# Spanish text printed on Nu statements, so they must stay in Spanish.
-MONTHS = "ENE|FEB|MAR|ABR|MAY|JUN|JUL|AGO|SEP|OCT|NOV|DIC"
 
 ROW_RE = re.compile(
     rf"^(\d{{2}}\s+(?:{MONTHS})\s+\d{{4}})\s+(\d{{2}}\s+(?:{MONTHS})\s+\d{{4}})\s+"
@@ -22,19 +20,10 @@ ROW_RE = re.compile(
     re.IGNORECASE,
 )
 
-MONTHS_MAP = {
-    "ENE": 1, "FEB": 2, "MAR": 3, "ABR": 4, "MAY": 5, "JUN": 6,
-    "JUL": 7, "AGO": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DIC": 12,
-}
-
-
-def clean_amount(raw: str) -> float:
-    return float(raw.replace(",", ""))
-
 
 def date_to_iso(date_str: str) -> str:
     day, mon, year = date_str.split()
-    return f"{year}-{MONTHS_MAP[mon.upper()]:02d}-{int(day):02d}"
+    return f"{year}-{SPANISH_MONTHS[mon.upper()]:02d}-{int(day):02d}"
 
 
 def parse_nu(pdf_path: str) -> list[Transaction]:
