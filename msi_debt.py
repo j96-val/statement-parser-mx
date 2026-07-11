@@ -7,18 +7,13 @@ installments are intentionally folded into its regular-section rows instead
 of tracked separately (see parsers/banorte.py's module docstring), so they
 never appear here. No bank prints this consolidated forward view itself.
 """
-import calendar
 from datetime import date
 
 import pandas as pd
 
 
 def _add_months(d: date, n: int) -> date:
-    month = d.month - 1 + n
-    year = d.year + month // 12
-    month = month % 12 + 1
-    day = min(d.day, calendar.monthrange(year, month)[1])
-    return date(year, month, day)
+    return (pd.Timestamp(d) + pd.DateOffset(months=n)).date()
 
 
 def active_msi(df: pd.DataFrame) -> pd.DataFrame:
