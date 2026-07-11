@@ -28,6 +28,12 @@ from msi_debt import active_msi, monthly_projection
 import config
 import db
 import validate
+import statements
+
+BANK_DISPLAY = {
+    "liverpool": "Liverpool", "banamex": "Banamex", "invex": "Invex Volaris",
+    "nu": "Nu", "banorte": "Banorte", "santander": "Santander",
+}
 
 # NOTE: kept in Spanish because these are the literal month abbreviations
 # printed on the statements themselves (used as dict keys for lookup).
@@ -114,8 +120,9 @@ def guess_year_from_filename(pdf_path: str) -> int:
     return datetime.now().year
 
 
-def build_rows(pdf_paths: list[str]) -> tuple[list[dict], list[str]]:
+def build_rows(pdf_paths: list[str]) -> tuple[list[dict], list[dict], list[str]]:
     rows = []
+    statement_rows = []
     imported_paths = []
     for pdf_path in pdf_paths:
         bank = detect_bank(pdf_path)
@@ -234,13 +241,28 @@ def build_rows(pdf_paths: list[str]) -> tuple[list[dict], list[str]]:
         if ok:
             rows.extend(file_rows)
             imported_paths.append(pdf_path)
+            stmt = statements.extract_statement(bank, pdf_path, ocr_text)
+            if stmt:
+                statement_rows.append({
+                    "Bank": BANK_DISPLAY[bank],
+                    "Card": stmt["card"],
+                    "PeriodStart": stmt["period_start"],
+                    "PeriodEnd": stmt["period_end"],
+                    "CutoffDate": stmt["cutoff_date"],
+                    "PrevBalance": stmt["prev_balance"],
+                    "ClosingBalance": stmt["closing_balance"],
+                    "MinPayment": stmt["min_payment"],
+                    "NoInterestPayment": stmt["no_interest_payment"],
+                    "CreditLimit": stmt["credit_limit"],
+                    "File": fname,
+                })
         else:
             print(f"⛔ {fname}: failed validation, not imported")
 
-    return rows, imported_paths
+    return rows, statement_rows, imported_paths
 
 
-def write_excel(df: pd.DataFrame, out_path: str):
+def write_excel(df: pd.DataFrame, statements_df: pd.DataFrame, out_path: str):
     wb = Workbook()
 
     # --- Sheet 1: Transactions ---
@@ -404,6 +426,54 @@ def write_excel(df: pd.DataFrame, out_path: str):
                     ws6.cell(row=row_i, column=2).number_format = "$#,##0.00"
                     row_i += 1
 
+    # --- Sheet 7: Credit Utilization (Phase 5) - precomputed, one row per
+    # statement; only banks with a printed credit limit show up (Santander
+    # is debit, Liverpool doesn't print a limit). ---
+    util_df = statements_df[statements_df["CreditLimit"].notna()] if len(statements_df) else statements_df
+    if len(util_df):
+        ws7 = wb.create_sheet("Credit Utilization")
+        ws7.append(["Bank", "Cutoff Date", "Closing Balance", "Credit Limit", "Utilization %"])
+        for cell in ws7[1]:
+            cell.font = Font(bold=True, color="FFFFFF", name="Arial")
+            cell.fill = PatternFill("solid", fgColor="4472C4")
+        for i, (_, r) in enumerate(util_df.sort_values("CutoffDate").iterrows(), start=2):
+            ws7.cell(row=i, column=1, value=r["Bank"])
+            ws7.cell(row=i, column=2, value=r["CutoffDate"])
+            ws7.cell(row=i, column=3, value=r["ClosingBalance"])
+            ws7.cell(row=i, column=3).number_format = "$#,##0.00"
+            ws7.cell(row=i, column=4, value=r["CreditLimit"])
+            ws7.cell(row=i, column=4).number_format = "$#,##0.00"
+            if r["ClosingBalance"] is not None and r["CreditLimit"]:
+                ws7.cell(row=i, column=5, value=r["ClosingBalance"] / r["CreditLimit"])
+                ws7.cell(row=i, column=5).number_format = "0.0%"
+        ws7.column_dimensions["A"].width = 14
+        ws7.column_dimensions["B"].width = 14
+        ws7.column_dimensions["C"].width = 16
+        ws7.column_dimensions["D"].width = 16
+        ws7.column_dimensions["E"].width = 14
+
+    # --- Sheet 8: Fees & Interest by Year - categorize.py already routes
+    # COMISION/INTERES/ANUALIDAD/IVA rows to "Card Interest/Fees" (Phase 1);
+    # this is just a yearly rollup of that existing category, live SUMIFS. ---
+    if "Category" in headers and len(df):
+        ws8 = wb.create_sheet("Fees & Interest by Year")
+        ws8.append(["Year", "Total Fees & Interest"])
+        for cell in ws8[1]:
+            cell.font = Font(bold=True, color="FFFFFF", name="Arial")
+            cell.fill = PatternFill("solid", fgColor="4472C4")
+        years = sorted({m[:4] for m in df["Month"]})
+        month_col = get_column_letter(headers.index("Month") + 1)
+        for i, year in enumerate(years, start=2):
+            ws8.cell(row=i, column=1, value=year)
+            ws8.cell(row=i, column=2,
+                      value=(f'=SUMIFS(Transactions!{amount_col}2:{amount_col}{n},'
+                             f'Transactions!{category_col}2:{category_col}{n},"Card Interest/Fees",'
+                             f'Transactions!{month_col}2:{month_col}{n},">="&"{year}-01",'
+                             f'Transactions!{month_col}2:{month_col}{n},"<="&"{year}-12")'))
+            ws8.cell(row=i, column=2).number_format = "$#,##0.00"
+        ws8.column_dimensions["A"].width = 10
+        ws8.column_dimensions["B"].width = 20
+
     wb.save(out_path)
 
 
@@ -419,17 +489,28 @@ if __name__ == "__main__":
             sys.exit(1)
         print(f"Processing {len(pdf_paths)} PDF(s) from {folder}/ ...")
 
-    rows, imported_paths = build_rows(pdf_paths)
+    rows, statement_rows, imported_paths = build_rows(pdf_paths)
     conn = db.connect()
     db.init_db(conn)
     n_new = db.insert_transactions(conn, rows)
+
+    for stmt in statement_rows:
+        warning = validate.check_continuity(conn, stmt)
+        if warning:
+            print(f"  ⚠️  {warning}")
+    n_stmt_new, stmt_duplicates = db.insert_statements(conn, statement_rows)
+    for dup in stmt_duplicates:
+        print(f"  ⚠️  {dup['Bank']} {dup.get('CutoffDate')}: statement already imported, skipped")
+
     df = db.fetch_dataframe(conn)
+    statements_df = db.fetch_statements(conn)
 
     out_dir = config.REPORTS_DIR
     out_dir.mkdir(exist_ok=True)
     out = str(out_dir / "consolidated_expense_report.xlsx")
-    write_excel(df, out)
+    write_excel(df, statements_df, out)
     print(f"Imported {n_new} new of {len(rows)} parsed from {len(pdf_paths)} file(s).")
+    print(f"Imported {n_stmt_new} new statement(s) ({len(stmt_duplicates)} duplicate(s) skipped).")
     print(f"Saved to {out}. DB now holds {len(df)} transactions total.")
     if len(df):
         print(df.groupby(["Bank", "Category"])["Amount"].sum().sort_values(ascending=False))

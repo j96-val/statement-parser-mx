@@ -19,6 +19,7 @@ import statistics
 import pdfplumber
 
 import config
+import db
 from parsers.liverpool import MONEY_RE, normalize_line, clean_amount as liverpool_clean_amount
 
 TOLERANCE = 1.00  # pesos; absorbs rounding/cents noise, not real discrepancies
@@ -68,6 +69,25 @@ def check_review_ratio(rows: list[dict], threshold: float = 0.2) -> str | None:
     ratio = flagged / len(rows)
     if ratio > threshold:
         return f"{flagged}/{len(rows)} rows ({ratio:.0%}) flagged for review"
+    return None
+
+
+def check_continuity(conn, stmt: dict) -> str | None:
+    """Soft warn: a new statement's previous balance should match the prior
+    statement's closing balance for the same (bank, card) - a mismatch
+    signals a gap in uploaded history (a statement in between was never
+    imported). Runs against statements already in the DB, so call this
+    before inserting the new one."""
+    if stmt.get("PrevBalance") is None:
+        return None
+    prior = db.latest_statement(conn, stmt["Bank"], stmt.get("Card"), stmt.get("CreditLimit"), stmt.get("CutoffDate"))
+    if prior is None or prior["closing_balance"] is None:
+        return None
+    diff = stmt["PrevBalance"] - prior["closing_balance"]
+    if abs(diff) > TOLERANCE:
+        return (f"{stmt['Bank']} {stmt.get('CutoffDate')}: previous balance {stmt['PrevBalance']:.2f} "
+                f"doesn't match prior statement's closing balance {prior['closing_balance']:.2f} "
+                f"(diff {diff:+.2f}) - possible gap in uploaded history")
     return None
 
 

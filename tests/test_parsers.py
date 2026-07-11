@@ -21,6 +21,9 @@ from parsers import banamex, invex, liverpool, nu, banorte, santander
 import build_report
 import enrich
 import msi_debt
+import statements
+import db
+import validate
 
 
 # --- categorize.py -----------------------------------------------------------
@@ -260,6 +263,145 @@ def test_detect_bank_nu_token_no_false_positive():
     assert build_report.detect_bank("NU_05.pdf") == "nu"
     # "NUMERO..." must NOT be detected as Nu (file doesn't exist -> unknown)
     assert build_report.detect_bank("NUMERO-05.pdf") == "unknown"
+
+
+# --- Phase 5: statement-level cover-page extraction (statements.py) ---------
+
+TEXT_BANK_COVER_PAGE = (
+    "Periodo: 27-May-2026 al 26-Jun-2026\n"
+    "Fecha de Corte: 26-Jun-2026\n"
+    "Límite de crédito: $48,000.00\n"
+    "Adeudo del periodo anterior = $2,972.91\n"
+    "Pago mínimo:4 $600.00\n"
+    "Pago para no generar intereses:2 $3,058.40\n"
+    "Saldo deudor total:11 $5,221.72\n"
+    "Número de la tarjeta XXXX XXXX XXXX 8442\n"
+)
+
+def test_extract_text_bank_reads_all_fields():
+    r = statements._extract_text_bank(TEXT_BANK_COVER_PAGE)
+    assert r["period_start"] == "2026-05-27" and r["period_end"] == "2026-06-26"
+    assert r["cutoff_date"] == "2026-06-26"
+    assert r["credit_limit"] == 48000.00
+    assert r["prev_balance"] == 2972.91
+    assert r["min_payment"] == 600.00
+    assert r["no_interest_payment"] == 3058.40
+    assert r["closing_balance"] == 5221.72
+    assert r["card"] == "8442"
+
+def test_extract_text_bank_no_prev_balance_derives_closing_from_components():
+    # Banamex prints no "Adeudo del periodo anterior" nor "Saldo deudor
+    # total" line anywhere - closing balance falls back to summing the
+    # regular + installment charge subtotals it does print.
+    text = (
+        "Periodo: 20-may-2026 al 19-jun-2026\n"
+        "Fecha de corte: 19-jun-2026\n"
+        "Límite de crédito: $ 38,500.00\n"
+        "Pago mínimo:4 $590.00\n"
+        "Saldo cargos regulares: $ 1,781.47\n"
+        "Saldo cargos a meses: $ 0.00\n"
+    )
+    r = statements._extract_text_bank(text)
+    assert r["prev_balance"] is None
+    assert r["closing_balance"] == 1781.47
+
+def test_extract_santander_from_ocr_summary():
+    text = (
+        "PERIODO DEL 01-JUN-2026 AL 30-JUN-2026\n"
+        "CORTE AL 30-JUN-2026\n"
+        "TOTAL 2,313.59 100.00% 8,455.99 100.00%\n"
+    )
+    r = statements._extract_santander(text)
+    assert r["period_start"] == "2026-06-01" and r["period_end"] == "2026-06-30"
+    assert r["cutoff_date"] == "2026-06-30"
+    assert r["prev_balance"] == 2313.59 and r["closing_balance"] == 8455.99
+    assert r["min_payment"] is None and r["credit_limit"] is None
+
+def test_extract_liverpool_derives_closing_balance_from_clean_components():
+    text = (
+        "SALDO ANTERIOR 74,334.73\n"
+        "PAGOS Y ABONOS -43,038.00\n"
+        "COMPRAS Y CARGOS 63,521.17\n"
+        "COMISIONES 0.00\n"
+    )
+    r = statements._extract_liverpool(text, "liverpool-2026-05-25.pdf")
+    assert r["cutoff_date"] == "2026-05-25"
+    assert r["prev_balance"] == 74334.73
+    assert r["closing_balance"] == 94817.90
+
+def test_extract_liverpool_no_cutoff_without_filename_convention():
+    r = statements._extract_liverpool("SALDO ANTERIOR 100.00\n", "liverpool-01-05-26.pdf")
+    assert r["cutoff_date"] is None  # legacy filename, not the required YYYY-MM-DD form
+
+def test_extract_statement_dispatches_by_bank():
+    assert statements.extract_statement("unknown-bank", "x.pdf") is None
+
+
+# --- Phase 5: statement identity + dedup/continuity (db.py, validate.py) ----
+
+def test_statement_identity_prefers_card():
+    assert db.statement_identity("8442", 48000.0) == "card:8442"
+
+def test_statement_identity_falls_back_to_credit_limit():
+    # regression: two real Banamex statements ($18,500 vs $38,500 limits)
+    # collided on bank+cutoff_date alone because Banamex never exposes the
+    # card number as text - credit_limit tells them apart.
+    assert db.statement_identity(None, 38500.0) == "limit:38500.0"
+
+def test_statement_identity_none_when_neither_available():
+    assert db.statement_identity(None, None) is None
+
+def _stmt_row(**overrides):
+    row = {
+        "Bank": "Banamex", "Card": None, "PeriodStart": "2026-05-20",
+        "PeriodEnd": "2026-06-19", "CutoffDate": "2026-06-19", "PrevBalance": None,
+        "ClosingBalance": 1194.50, "MinPayment": 370.0, "NoInterestPayment": 1194.50,
+        "CreditLimit": 18500.0, "File": "f",
+    }
+    row.update(overrides)
+    return row
+
+def test_insert_statements_dedups_same_identity_keeps_distinct_accounts():
+    conn = db.connect(":memory:")
+    db.init_db(conn)
+    rows = [
+        _stmt_row(),
+        _stmt_row(CreditLimit=38500.0, ClosingBalance=1781.47),  # different real account
+        _stmt_row(),  # exact duplicate of the first
+    ]
+    n_new, duplicates = db.insert_statements(conn, rows)
+    assert n_new == 2
+    assert len(duplicates) == 1
+
+def test_check_continuity_flags_balance_gap():
+    conn = db.connect(":memory:")
+    db.init_db(conn)
+    db.insert_statements(conn, [_stmt_row(
+        Card="8442", CreditLimit=48000.0, CutoffDate="2026-05-26",
+        PeriodEnd="2026-05-26", ClosingBalance=3000.0,
+    )])
+    warning = validate.check_continuity(conn, _stmt_row(
+        Card="8442", CreditLimit=48000.0, CutoffDate="2026-06-26", PrevBalance=5000.0,
+    ))
+    assert warning is not None and "gap" in warning
+
+def test_check_continuity_no_warning_when_balances_match():
+    conn = db.connect(":memory:")
+    db.init_db(conn)
+    db.insert_statements(conn, [_stmt_row(
+        Card="8442", CreditLimit=48000.0, CutoffDate="2026-05-26",
+        PeriodEnd="2026-05-26", ClosingBalance=3000.0,
+    )])
+    warning = validate.check_continuity(conn, _stmt_row(
+        Card="8442", CreditLimit=48000.0, CutoffDate="2026-06-26", PrevBalance=3000.0,
+    ))
+    assert warning is None
+
+def test_check_continuity_no_prior_statement_is_silent():
+    conn = db.connect(":memory:")
+    db.init_db(conn)
+    warning = validate.check_continuity(conn, _stmt_row(PrevBalance=1000.0))
+    assert warning is None
 
 
 if __name__ == "__main__":
