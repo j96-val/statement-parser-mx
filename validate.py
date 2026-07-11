@@ -27,6 +27,14 @@ NU_CHARGES_RE = re.compile(r"Cargos regulares \(no a meses\)\s*\+\s*\$?([\d,]+\.
 NU_PAYMENTS_RE = re.compile(r"Pagos y abonos\s*-\s*\$?([\d,]+\.\d{2})", re.IGNORECASE)
 INVEX_CHARGES_RE = re.compile(r"Total cargos\s*\+\s*\$?([\d,]+\.\d{2})", re.IGNORECASE)
 INVEX_PAYMENTS_RE = re.compile(r"Total abonos\s*-\s*\$?([\d,]+\.\d{2})", re.IGNORECASE)
+BANORTE_CHARGES_RE = re.compile(r"Total cargos\s*\+\s*\$?([\d,]+\.\d{2})", re.IGNORECASE)
+BANORTE_PAYMENTS_RE = re.compile(r"Total abonos\s*-\s*\$?([\d,]+\.\d{2})", re.IGNORECASE)
+# Santander's "Cuenta de cheques." summary block (Depositos/Retiros for the
+# checking sub-account) prints before the "Dinero Creciente" (savings)
+# sub-account's own Depositos/Retiros recap further down the OCR'd text, so a
+# plain first-match search picks the right (checking) numbers.
+SANTANDER_CHARGES_RE = re.compile(r"-\s*Retiros\s+([\d,]+\.\d{2})", re.IGNORECASE)
+SANTANDER_PAYMENTS_RE = re.compile(r"\+\s*Depositos\s+([\d,]+\.\d{2})", re.IGNORECASE)
 
 
 def check_empty(bank: str, rows: list[dict]) -> str | None:
@@ -133,8 +141,20 @@ def extract_printed_totals(bank: str, pdf_path: str, ocr_text: str | None = None
             "charges": _search(INVEX_CHARGES_RE, text),
             "payments": _search(INVEX_PAYMENTS_RE, text, negate=True),
         }
+    if bank == "banorte":
+        text = _pdf_text(pdf_path)
+        return {
+            "charges": _search(BANORTE_CHARGES_RE, text),
+            "payments": _search(BANORTE_PAYMENTS_RE, text, negate=True),
+        }
     if bank == "liverpool":
         return _liverpool_subtotal(ocr_text or "")
+    if bank == "santander":
+        text = ocr_text or ""
+        return {
+            "charges": _search(SANTANDER_CHARGES_RE, text),
+            "payments": _search(SANTANDER_PAYMENTS_RE, text, negate=True),
+        }
     # Banamex: no reliably labeled total line. The numbers that would let us
     # reconcile ("Cargos regulares (no a meses)") only match by coincidence -
     # it excludes interest/commission charges the movement rows do include,

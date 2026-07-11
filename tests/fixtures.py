@@ -1,7 +1,7 @@
 """
-Synthetic PDF fixtures for the text-only parsers (Nu, Invex) - fake data, real
-row/section shape, so the real parsers + validate.py's reconciliation regexes
-run end to end in CI with no real statement data.
+Synthetic PDF fixtures for the text-only parsers (Nu, Invex, Banorte) - fake
+data, real row/section shape, so the real parsers + validate.py's
+reconciliation regexes run end to end in CI with no real statement data.
 
 Liverpool and Banamex are NOT covered here: Liverpool is OCR-only and
 Banamex's parser always runs an OCR fallback pass (needs tesseract + poppler),
@@ -38,6 +38,25 @@ FIXTURES = {
         "expected_rows": 3,
         "expected_charges": 95.50,
         "expected_payments": -500.00,
+    },
+    "banorte": {
+        "lines": [
+            "BANCO MERCANTIL DEL NORTE, S.A. BANORTE ESTADO DE CUENTA",
+            "DESGLOSE DE MOVIMIENTOS",
+            "COMPRAS Y CARGOS DIFERIDOS A MESES SIN INTERESES",
+            "17-mar-2026 MAPFRE L COBRANZA CIUDAD DE M $4,227.82 $3,875.51 $352.31 01/12 0.00%",
+            "CARGOS, ABONOS Y COMPRAS REGULARES (NO A MESES)",
+            "17-mar-2026 10-abr-2026 MAPFRE L COBRANZA CIUDAD DE M 01/12 +$352.31",
+            "26-mar-2026 27-mar-2026 PAGO BANCA DIGITAL / SUCURSAL, GRACIAS. -$125.00",
+            "Total cargos + $352.31",
+            "Total abonos - $125.00",
+        ],
+        # only 2 rows: the diferido breakdown line above must NOT be parsed as
+        # a third row, or its $352.31 would double-count against the regular
+        # section's row for the same purchase.
+        "expected_rows": 2,
+        "expected_charges": 352.31,
+        "expected_payments": -125.00,
     },
 }
 

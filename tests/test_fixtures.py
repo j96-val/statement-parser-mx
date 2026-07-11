@@ -4,7 +4,7 @@ parse it with the real parser, and reconcile against validate.py - the same
 totals-reconciliation check ROADMAP.md calls the most valuable in production,
 now automated against fake data.
 
-Only Nu and Invex are covered - both parse via pdfplumber text extraction
+Nu, Invex, and Banorte are covered - all parse via pdfplumber text extraction
 only. Liverpool is OCR-only and Banamex always runs an OCR fallback pass
 (needs tesseract + poppler); their pure text->rows logic is already covered
 by tests/test_parsers.py. See tests/fixtures.py for the full rationale.
@@ -32,6 +32,7 @@ except ImportError:
 
 from parsers.nu import parse_nu
 from parsers.invex import parse_invex
+from parsers.banorte import parse_banorte
 import validate
 from fixtures import FIXTURES, make_pdf
 
@@ -84,6 +85,24 @@ def test_invex_fixture_parses_and_reconciles():
     assert printed == {"charges": fx["expected_charges"], "payments": fx["expected_payments"]}
 
     ok, messages = validate.validate_file("invex", val_rows, path)
+    assert ok, messages
+
+
+def test_banorte_fixture_parses_and_reconciles():
+    path = _build("banorte")
+    rows = parse_banorte(path)
+    fx = FIXTURES["banorte"]
+    assert len(rows) == fx["expected_rows"]
+    charges = sum(r["amount"] for r in rows if r["amount"] > 0)
+    payments = sum(r["amount"] for r in rows if r["amount"] < 0)
+    assert charges == fx["expected_charges"]
+    assert payments == fx["expected_payments"]
+
+    printed = validate.extract_printed_totals("banorte", path)
+    assert printed == {"charges": fx["expected_charges"], "payments": fx["expected_payments"]}
+
+    val_rows = [{"Amount": r["amount"], "Description": r["description"], "Review": ""} for r in rows]
+    ok, messages = validate.validate_file("banorte", val_rows, path)
     assert ok, messages
 
 

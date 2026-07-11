@@ -8,6 +8,17 @@ they are intentionally left in Spanish - translating them would break the
 matching against real statement text.
 """
 
+# Santander debit account: internal moves between the checking (cheques) and
+# savings (Dinero Creciente) sub-accounts - not real spend, but captured to
+# reconcile against the statement's printed totals. These can be either sign
+# (money leaving cheques is a charge, money returning is a payment), so
+# categorize() checks this list before its amount<0 branch - otherwise every
+# negative-amount transfer would fall into "Refunds/Adjustments" instead.
+INTERNAL_TRANSFER_KEYWORDS = [
+    "CARGO APERTURA INV", "LIQ A CHE INVERSION", "INVERSION VISTA A CHEQUES",
+    "CHEQUES A INVERSION",
+]
+
 RULES = [
     ("Restaurants", [
         "REST", "RESTAURANT", "STARBUCKS", "DAIRY QUEEN", "PIZZERIA", "IZAKAYA",
@@ -65,11 +76,15 @@ RULES = [
 CARD_PAYMENT_KEYWORDS = [
     "GRACIAS POR SU PAGO", "SU PAGO SP", "PAGO SPE", "SU ABONO", "SU PAGO POR",
     "CIAS POR TU PAGO",  # covers Nu's "Grácias por tu pago" (their own accent typo)
+    "PAGO BANCA DIGITAL",  # Banorte's own-payment phrasing, e.g. "PAGO BANCA DIGITAL / SUCURSAL, GRACIAS."
 ]
 
 
 def categorize(description: str, amount: float) -> str:
     upper = description.upper()
+
+    if any(kw in upper for kw in INTERNAL_TRANSFER_KEYWORDS):
+        return "Transferencias Internas"
 
     if amount < 0:
         # Any card payment is categorized separately, unless it's clearly a
