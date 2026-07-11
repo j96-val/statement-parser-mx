@@ -71,20 +71,8 @@ statement-parser-mx/
 
 ## Adding a new bank
 
-Each parser exposes a function that takes a PDF path and returns a list of
-dicts with the keys `date` (ISO `YYYY-MM-DD`), `description`, `amount`
-(positive = charge, negative = payment) and `type`.
-
-Steps:
-
-1. Check whether the PDF has directly extractable text (`pdfplumber`) or
-   needs OCR (`pytesseract` + `pdf2image`), like Liverpool does.
-2. Write `parsers/newbank.py` with a `parse_newbank(pdf_path)` function.
-3. In `build_report.py`, add detection logic in `detect_bank()` and a
-   branch in `build_dataframe()`.
-4. **Validate the totals**: compare the sum of charges/payments you
-   extracted against the total the statement itself reports. This is the
-   key step — it's what caught OCR errors and hidden rows in earlier banks.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full checklist (parser
+shape, wiring, totals validation, and the fixture required for CI).
 
 ## Categories
 
@@ -95,6 +83,18 @@ automatically separated from real spending categories.
 Note: the keyword lists in `categorize.py` and the section markers inside
 each parser are intentionally left in Spanish, since they need to match
 the literal Spanish text printed on Mexican bank statements.
+
+## Configuration
+
+Optional. Copy `.env.example` to `.env` and adjust — every setting has a
+default that matches prior hardcoded behavior, so this is only needed to
+customize:
+
+- `STATEMENTS_DIR` / `REPORTS_DIR` — input/output folder paths.
+- `OCR_DPI` — resolution used to render PDF pages before OCR (Liverpool,
+  Banamex's fallback pass).
+- `VALIDATION_STRICT` — `true` (default) blocks import on a totals
+  mismatch; `false`/`warn` prints the same warning but always imports.
 
 ## Privacy notes
 
