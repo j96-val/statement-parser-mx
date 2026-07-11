@@ -111,6 +111,18 @@ These catch logic regressions. They do **not** replace **totals
 reconciliation** against a real statement, which is the only way to catch
 OCR/extraction errors — see "Adding a new bank" below.
 
+## Web viewer (optional)
+
+A local Streamlit app over the SQLite history: filter by bank/category/month,
+see spend trends, and correct a miscategorized transaction by editing it in
+the table (saved to `category_overrides`, applied to future imports too).
+Runs entirely on your machine — no data leaves it.
+
+```bash
+pip install -r requirements-viewer.txt
+streamlit run viewer.py
+```
+
 ## Structure
 
 ```
