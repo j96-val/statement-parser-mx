@@ -20,6 +20,7 @@ from parsers.banamex import parse_banamex
 from parsers.invex import parse_invex
 from parsers.nu import parse_nu
 from categorize import categorize
+import db
 
 # NOTE: kept in Spanish because these are the literal month abbreviations
 # printed on the statements themselves (used as dict keys for lookup).
@@ -95,7 +96,7 @@ def guess_year_from_filename(pdf_path: str) -> int:
     return datetime.now().year
 
 
-def build_dataframe(pdf_paths: list[str]) -> pd.DataFrame:
+def build_rows(pdf_paths: list[str]) -> list[dict]:
     rows = []
     for pdf_path in pdf_paths:
         bank = detect_bank(pdf_path)
@@ -161,10 +162,9 @@ def build_dataframe(pdf_paths: list[str]) -> pd.DataFrame:
         else:
             print(f"⚠️  Could not identify the bank for: {pdf_path} (skipped)")
 
-    df = pd.DataFrame(rows)
-    if len(df):
-        df["Month"] = df["Date"].str.slice(0, 7)  # YYYY-MM
-    return df
+    for r in rows:
+        r["Month"] = r["Date"][:7]  # YYYY-MM
+    return rows
 
 
 def write_excel(df: pd.DataFrame, out_path: str):
@@ -257,11 +257,17 @@ if __name__ == "__main__":
             sys.exit(1)
         print(f"Processing {len(pdf_paths)} PDF(s) from {folder}/ ...")
 
-    df = build_dataframe(pdf_paths)
+    rows = build_rows(pdf_paths)
+    conn = db.connect()
+    db.init_db(conn)
+    n_new = db.insert_transactions(conn, rows)
+    df = db.fetch_dataframe(conn)
+
     out_dir = Path(__file__).parent / "reports"
     out_dir.mkdir(exist_ok=True)
     out = str(out_dir / "consolidated_expense_report.xlsx")
     write_excel(df, out)
-    print(f"Saved to {out}. {len(df)} transactions from {len(pdf_paths)} file(s).")
+    print(f"Imported {n_new} new of {len(rows)} parsed from {len(pdf_paths)} file(s).")
+    print(f"Saved to {out}. DB now holds {len(df)} transactions total.")
     if len(df):
         print(df.groupby(["Bank", "Category"])["Amount"].sum().sort_values(ascending=False))
