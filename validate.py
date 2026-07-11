@@ -18,6 +18,7 @@ import statistics
 
 import pdfplumber
 
+import config
 from parsers.liverpool import MONEY_RE, normalize_line, clean_amount as liverpool_clean_amount
 
 TOLERANCE = 1.00  # pesos; absorbs rounding/cents noise, not real discrepancies
@@ -144,21 +145,23 @@ def extract_printed_totals(bank: str, pdf_path: str, ocr_text: str | None = None
 
 
 def validate_file(bank: str, rows: list[dict], pdf_path: str, ocr_text: str | None = None) -> tuple[bool, list[str]]:
-    messages = []
+    """hard_ok gates DB insertion. In warn-only mode (config.VALIDATION_STRICT
+    is False) hard-fail conditions still run and print, but never block."""
+    hard_reasons = []
 
     empty_msg = check_empty(bank, rows)
     if empty_msg:
-        return False, [f"❌ {empty_msg}"]
+        hard_reasons.append(empty_msg)
 
-    for w in check_outliers(rows):
-        messages.append(f"⚠️  {w}")
+    printed = extract_printed_totals(bank, pdf_path, ocr_text)
+    hard_reasons.extend(reconcile(rows, printed))
+
+    icon = "❌" if config.VALIDATION_STRICT else "⚠️ "
+    messages = [f"{icon} {m}" for m in hard_reasons]
+    messages.extend(f"⚠️  {w}" for w in check_outliers(rows))
     ratio_msg = check_review_ratio(rows)
     if ratio_msg:
         messages.append(f"⚠️  {ratio_msg}")
 
-    printed = extract_printed_totals(bank, pdf_path, ocr_text)
-    recon_msgs = reconcile(rows, printed)
-    hard_ok = not recon_msgs
-    messages.extend(f"❌ {m}" for m in recon_msgs)
-
+    hard_ok = not hard_reasons or not config.VALIDATION_STRICT
     return hard_ok, messages
