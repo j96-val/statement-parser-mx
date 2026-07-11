@@ -17,7 +17,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from categorize import categorize
-from parsers import banamex, invex, liverpool, nu, banorte
+from parsers import banamex, invex, liverpool, nu, banorte, santander
 import build_report
 
 
@@ -41,6 +41,12 @@ def test_categorize_negative_splits_payment_vs_refund():
 
 def test_categorize_banorte_payment_phrase():
     assert categorize("PAGO BANCA DIGITAL / SUCURSAL, GRACIAS.", -125.0) == "Payments"
+
+def test_categorize_internal_transfer_either_sign():
+    # transfers can be positive (leaving cheques) or negative (returning) -
+    # must land in Transferencias Internas regardless, not Payments/Refunds
+    assert categorize("CARGO APERTURA INV CRECIENTE CHEQUES A INVERSION VISTA", 8530.0) == "Transferencias Internas"
+    assert categorize("LIQ A CHE INVERSION CRECIENTE INVERSION VISTA A CHEQUES", -2300.0) == "Transferencias Internas"
 
 
 # --- Liverpool: B1 (amount truncation) + normalize_line ----------------------
@@ -132,6 +138,43 @@ def test_banorte_installment_breakdown_row_not_matched():
     assert banorte.ROW_REGULAR_RE.match(line) is None
 
 
+# --- Santander -------------------------------------------------------------
+
+def test_santander_row_re_with_ocr_noise():
+    # OCR inserts stray "|"/"(" around the folio column border
+    line = "01-JUN-2026 |0190598 |PAGO TRANSF RAPIDA SPEI TRANSFERENCIA A SALVADOR MONTES PACA 370.00 8,530.00"
+    m = santander.ROW_RE.match(line)
+    assert m
+    date, folio, desc, amount, balance = m.groups()
+    assert date == "01-JUN-2026" and folio == "0190598" and amount == "370.00" and balance == "8,530.00"
+
+def test_santander_row_re_paren_variant():
+    line = "29-JUN-2026 (0000680 DEPOSITO EN EFECTIVO ATM 9,000.00 9,000.00"
+    m = santander.ROW_RE.match(line)
+    assert m and m.group(2) == "0000680"
+
+def test_santander_resolve_sign_deposit():
+    # balance went up -> deposit/credit -> negative per repo convention
+    signed, needs_review = santander.resolve_sign(amount=8900.0, delta=8900.0)
+    assert signed == -8900.0 and needs_review is False
+
+def test_santander_resolve_sign_withdrawal():
+    # balance went down -> withdrawal/charge -> positive
+    signed, needs_review = santander.resolve_sign(amount=370.0, delta=-370.0)
+    assert signed == 370.0 and needs_review is False
+
+def test_santander_resolve_sign_flags_mismatch():
+    # OCR misread the amount column: delta and amount disagree beyond tolerance
+    signed, needs_review = santander.resolve_sign(amount=300.0, delta=-370.0)
+    assert needs_review is True
+
+def test_santander_resolve_sign_flags_zero_delta():
+    # a real movement row always changes the balance; zero delta means OCR
+    # corrupted the balance column
+    _, needs_review = santander.resolve_sign(amount=100.0, delta=0.0)
+    assert needs_review is True
+
+
 # --- build_report: date helpers + C3 (detect_bank NU token match) -----------
 
 def test_dashed_date_to_iso():
@@ -148,6 +191,9 @@ def test_guess_year_from_filename():
 
 def test_detect_bank_banorte_filename():
     assert build_report.detect_bank("BANORTE-2026-04.pdf") == "banorte"
+
+def test_detect_bank_santander_filename():
+    assert build_report.detect_bank("SANTANDER-2026-06.pdf") == "santander"
 
 def test_detect_bank_nu_token_no_false_positive():
     # filename branch returns before any PDF is opened
