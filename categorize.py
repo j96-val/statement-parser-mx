@@ -65,6 +65,7 @@ RULES = [
 CARD_PAYMENT_KEYWORDS = [
     "GRACIAS POR SU PAGO", "SU PAGO SP", "PAGO SPE", "SU ABONO", "SU PAGO POR",
     "CIAS POR TU PAGO",  # covers Nu's "Grácias por tu pago" (their own accent typo)
+    "PAGO BANCA DIGITAL",  # Banorte's own-payment phrasing, e.g. "PAGO BANCA DIGITAL / SUCURSAL, GRACIAS."
 ]
 
 

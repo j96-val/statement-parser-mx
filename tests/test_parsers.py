@@ -17,7 +17,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from categorize import categorize
-from parsers import banamex, invex, liverpool, nu
+from parsers import banamex, invex, liverpool, nu, banorte
 import build_report
 
 
@@ -38,6 +38,9 @@ def test_categorize_uncategorized():
 def test_categorize_negative_splits_payment_vs_refund():
     assert categorize("GRACIAS POR SU PAGO", -1000.0) == "Payments"
     assert categorize("DEVOLUCION MERCANCIA", -50.0) == "Refunds/Adjustments"
+
+def test_categorize_banorte_payment_phrase():
+    assert categorize("PAGO BANCA DIGITAL / SUCURSAL, GRACIAS.", -125.0) == "Payments"
 
 
 # --- Liverpool: B1 (amount truncation) + normalize_line ----------------------
@@ -108,6 +111,27 @@ def test_invex_installment_row():
     assert purchase_date == "05-ene-2026" and due == "200.00" and num == "3 de 6"
 
 
+# --- Banorte -------------------------------------------------------------
+
+def test_banorte_regular_charge_row():
+    line = "17-MAR-2026 10-ABR-2026 MAPFRE L COBRANZA CIUDAD DE M 01/12 +$352.31"
+    m = banorte.ROW_REGULAR_RE.match(line)
+    assert m and m.group(4) == "+" and m.group(5) == "352.31"
+
+def test_banorte_payment_row_sign_and_type():
+    line = "26-MAR-2026 27-MAR-2026 PAGO BANCA DIGITAL / SUCURSAL, GRACIAS. -$125.00"
+    m = banorte.ROW_REGULAR_RE.match(line)
+    assert m and m.group(4) == "-" and m.group(5) == "125.00"
+
+def test_banorte_installment_breakdown_row_not_matched():
+    # the diferido-a-meses breakdown row (single date, ends in a % rate, no
+    # trailing +/-$amount) must NOT match the regular-row regex, or its
+    # monthly charge would double-count against the already-included
+    # regular-section row for the same purchase.
+    line = "17-MAR-2026 MAPFRE L COBRANZA CIUDAD DE M $4,227.82 $3,875.51 $352.31 01/12 0.00%"
+    assert banorte.ROW_REGULAR_RE.match(line) is None
+
+
 # --- build_report: date helpers + C3 (detect_bank NU token match) -----------
 
 def test_dashed_date_to_iso():
@@ -121,6 +145,9 @@ def test_guess_year_from_filename():
     # no year in name -> current year (not a frozen literal)
     from datetime import datetime
     assert build_report.guess_year_from_filename("liverpool.pdf") == datetime.now().year
+
+def test_detect_bank_banorte_filename():
+    assert build_report.detect_bank("BANORTE-2026-04.pdf") == "banorte"
 
 def test_detect_bank_nu_token_no_false_positive():
     # filename branch returns before any PDF is opened

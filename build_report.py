@@ -20,6 +20,7 @@ from parsers.liverpool import parse_liverpool
 from parsers.banamex import parse_banamex
 from parsers.invex import parse_invex
 from parsers.nu import parse_nu
+from parsers.banorte import parse_banorte
 from categorize import categorize
 import config
 import db
@@ -42,6 +43,8 @@ def detect_bank(pdf_path: str) -> str:
         return "banamex"
     if "INVEX" in name or "VOLARIS" in name:
         return "invex"
+    if "BANORTE" in name:
+        return "banorte"
     # match NU only as a delimited token, so filenames like "NUMERO..." don't
     # false-positive as Nu
     if "NU" in re.split(r"[-_ ]", name):
@@ -61,8 +64,12 @@ def detect_bank(pdf_path: str) -> str:
                     return "invex"
                 if "NU MÉXICO FINANCIERA" in text.upper() or "NU MEXICO FINANCIERA" in text.upper():
                     return "nu"
+                if "BANORTE" in text.upper():
+                    return "banorte"
             # last resort: if any page has Banamex's typical transaction
-            # pattern (date date description +/- $amount), assume Banamex
+            # pattern (date date description +/- $amount), assume Banamex.
+            # Checked after the BANORTE text match above since Banorte rows
+            # share this exact date-date-description-amount shape.
             for page in pdf.pages:
                 text = page.extract_text() or ""
                 if any(re.match(
@@ -160,6 +167,20 @@ def build_rows(pdf_paths: list[str]) -> tuple[list[dict], list[str]]:
                     "Bank": "Nu",
                     "File": fname,
                     "Date": t["date"],
+                    "Description": t["description"],
+                    "Category": cat,
+                    "Amount": t["amount"],
+                    "Type": t["type"],
+                    "Review": "",
+                })
+        elif bank == "banorte":
+            txns = parse_banorte(pdf_path)
+            for t in txns:
+                cat = categorize(t["description"], t["amount"])
+                file_rows.append({
+                    "Bank": "Banorte",
+                    "File": fname,
+                    "Date": dashed_date_to_iso(t["date"]),
                     "Description": t["description"],
                     "Category": cat,
                     "Amount": t["amount"],
