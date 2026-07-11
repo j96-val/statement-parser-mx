@@ -55,6 +55,7 @@ def parse_banorte(pdf_path: str) -> list[Transaction]:
                     amount = -amount
                 rows.append({
                     "date": op_date,
+                    "charge_date": charge_date,
                     "description": description.strip(),
                     "amount": amount,
                     "type": "payment" if amount < 0 else "charge",

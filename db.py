@@ -39,6 +39,24 @@ CREATE TABLE IF NOT EXISTS category_overrides (
 );
 """
 
+# Phase 4.1/4.2 columns, added to `transactions` after the base CREATE above.
+# Kept as an ALTER-based migration (not folded into SCHEMA) so existing users'
+# statement_history.db gets upgraded in place instead of silently missing
+# these columns forever.
+NEW_COLUMNS = {
+    "charge_date": "TEXT",
+    "card": "TEXT",
+    "statement_date": "TEXT",
+    "installment_num": "INTEGER",
+    "installment_total": "INTEGER",
+    "original_amount": "REAL",
+    "remaining_balance": "REAL",
+    "rate": "REAL",
+    "day_of_week": "TEXT",
+    "is_weekend": "INTEGER",
+    "merchant_norm": "TEXT",
+}
+
 
 def connect(path=DEFAULT_DB) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
@@ -46,9 +64,19 @@ def connect(path=DEFAULT_DB) -> sqlite3.Connection:
     return conn
 
 
+def migrate(conn: sqlite3.Connection) -> None:
+    """Idempotent: adds any column in NEW_COLUMNS missing from `transactions`."""
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(transactions)")}
+    for col, sql_type in NEW_COLUMNS.items():
+        if col not in existing:
+            conn.execute(f"ALTER TABLE transactions ADD COLUMN {col} {sql_type}")
+    conn.commit()
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
     conn.commit()
+    migrate(conn)
 
 
 def make_dedup_key(bank, date, description, amount, source_file, occ) -> str:
@@ -85,10 +113,17 @@ def insert_transactions(conn: sqlite3.Connection, rows: list[dict]) -> int:
         cur = conn.execute(
             """INSERT OR IGNORE INTO transactions
                (date, month, bank, description, category, amount, type,
-                review, source_file, dedup_key, imported_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                review, source_file, dedup_key, imported_at,
+                charge_date, card, statement_date, installment_num,
+                installment_total, original_amount, remaining_balance, rate,
+                day_of_week, is_weekend, merchant_norm)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (r["Date"], r["Date"][:7], r["Bank"], r["Description"], category,
-             r["Amount"], r["Type"], r["Review"], r["File"], key, now),
+             r["Amount"], r["Type"], r["Review"], r["File"], key, now,
+             r.get("ChargeDate"), r.get("Card"), r.get("StatementDate"),
+             r.get("InstallmentNum"), r.get("InstallmentTotal"),
+             r.get("OriginalAmount"), r.get("RemainingBalance"), r.get("Rate"),
+             r.get("DayOfWeek"), r.get("IsWeekend"), r.get("MerchantNorm")),
         )
         inserted += cur.rowcount
     conn.commit()
@@ -100,7 +135,14 @@ def fetch_dataframe(conn: sqlite3.Connection) -> pd.DataFrame:
         """SELECT bank AS Bank, source_file AS File, date AS Date,
                   description AS Description, category AS Category,
                   amount AS Amount, type AS Type, review AS Review,
-                  month AS Month
+                  month AS Month, charge_date AS ChargeDate, card AS Card,
+                  statement_date AS StatementDate,
+                  installment_num AS InstallmentNum,
+                  installment_total AS InstallmentTotal,
+                  original_amount AS OriginalAmount,
+                  remaining_balance AS RemainingBalance, rate AS Rate,
+                  day_of_week AS DayOfWeek, is_weekend AS IsWeekend,
+                  merchant_norm AS MerchantNorm
            FROM transactions ORDER BY date, id""",
         conn,
     )

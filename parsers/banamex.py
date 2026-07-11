@@ -72,6 +72,7 @@ def extract_rows_from_text(
             seen_keys.add(key)
             rows.append({
                 "date": op_date,
+                "charge_date": charge_date,
                 "description": description,
                 "amount": amount,
                 "type": "payment" if amount < 0 else "charge",

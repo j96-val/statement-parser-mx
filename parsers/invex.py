@@ -63,6 +63,7 @@ def parse_invex(pdf_path: str) -> list[Transaction]:
                 m_installment = ROW_INSTALLMENT_RE.match(line)
                 if m_installment:
                     purchase_date, desc, original, balance, installment_due, installment_num, rate = m_installment.groups()
+                    num, total = installment_num.split(" de ")
                     rows.append({
                         # Use the statement's cut-off date, not the original
                         # purchase date: this same purchase reappears on every
@@ -73,10 +74,16 @@ def parse_invex(pdf_path: str) -> list[Transaction]:
                         # month-over-month comparisons. Falls back to the
                         # purchase date only if the cut-off date wasn't found.
                         "date": statement_date or purchase_date,
-                        "description": f"{desc.strip()} (installment {installment_num})",
+                        "statement_date": statement_date,
+                        "description": desc.strip(),
                         "amount": clean_amount(installment_due),
                         "type": "charge",
                         "is_installment": True,
+                        "installment_num": int(num),
+                        "installment_total": int(total),
+                        "original_amount": clean_amount(original),
+                        "remaining_balance": clean_amount(balance),
+                        "rate": float(rate),
                     })
                     continue
 
@@ -88,6 +95,8 @@ def parse_invex(pdf_path: str) -> list[Transaction]:
                         amount = -amount
                     rows.append({
                         "date": op_date,
+                        "charge_date": charge_date,
+                        "statement_date": statement_date,
                         "description": description.strip(),
                         "amount": amount,
                         "type": "payment" if amount < 0 else "charge",
