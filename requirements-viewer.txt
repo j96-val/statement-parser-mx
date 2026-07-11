@@ -1,0 +1,6 @@
+streamlit
+# pyarrow>=20 segfaults on the 2nd script rerun when rendering a chart
+# (st.line_chart/st.bar_chart) - reproduced with a 3-row synthetic Series,
+# unrelated to app data. Any filter interaction triggers a rerun, so this
+# crashed on first use. Pin below the broken range until upstream fixes it.
+pyarrow<20

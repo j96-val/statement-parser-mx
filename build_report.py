@@ -22,6 +22,7 @@ from parsers.invex import parse_invex
 from parsers.nu import parse_nu
 from parsers.banorte import parse_banorte
 from parsers.santander import parse_santander
+from parsers.base import SPANISH_MONTHS
 from categorize import categorize
 from enrich import normalize_merchant, day_of_week_info
 from msi_debt import active_msi, monthly_projection
@@ -33,13 +34,6 @@ import statements
 BANK_DISPLAY = {
     "liverpool": "Liverpool", "banamex": "Banamex", "invex": "Invex Volaris",
     "nu": "Nu", "banorte": "Banorte", "santander": "Santander",
-}
-
-# NOTE: kept in Spanish because these are the literal month abbreviations
-# printed on the statements themselves (used as dict keys for lookup).
-SPANISH_MONTHS = {
-    "ENE": 1, "FEB": 2, "MAR": 3, "ABR": 4, "MAY": 5, "JUN": 6,
-    "JUL": 7, "AGO": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DIC": 12,
 }
 
 
@@ -120,6 +114,20 @@ def guess_year_from_filename(pdf_path: str) -> int:
     return datetime.now().year
 
 
+def _row(bank_display, fname, date, description, amount, type_, review, **extras) -> dict:
+    return {
+        "Bank": bank_display,
+        "File": fname,
+        "Date": date,
+        "Description": description,
+        "Category": categorize(description, amount),
+        "Amount": amount,
+        "Type": type_,
+        "Review": review,
+        **extras,
+    }
+
+
 def build_rows(pdf_paths: list[str]) -> tuple[list[dict], list[dict], list[str]]:
     rows = []
     statement_rows = []
@@ -133,99 +141,60 @@ def build_rows(pdf_paths: list[str]) -> tuple[list[dict], list[dict], list[str]]
         if bank == "liverpool":
             year = guess_year_from_filename(pdf_path)
             txns, _, ocr_text = parse_liverpool(pdf_path)
-            for t in txns:
-                cat = categorize(t["description"], t["amount"])
-                file_rows.append({
-                    "Bank": "Liverpool",
-                    "File": fname,
-                    "Date": liverpool_date_to_iso(t["date"], year),
-                    "Description": t["description"],
-                    "Category": cat,
-                    "Amount": t["amount"],
-                    "Type": t["type"],
-                    "Review": "YES" if t["needs_review"] else "",
-                })
+            file_rows = [
+                _row("Liverpool", fname, liverpool_date_to_iso(t["date"], year),
+                     t["description"], t["amount"], t["type"],
+                     "YES" if t["needs_review"] else "")
+                for t in txns
+            ]
         elif bank == "banamex":
             txns = parse_banamex(pdf_path)
-            for t in txns:
-                cat = categorize(t["description"], t["amount"])
-                file_rows.append({
-                    "Bank": "Banamex",
-                    "File": fname,
-                    "Date": dashed_date_to_iso(t["date"]),
-                    "Description": t["description"],
-                    "Category": cat,
-                    "Amount": t["amount"],
-                    "Type": t["type"],
-                    "Review": "YES" if t.get("source") == "ocr_fallback" else "",
-                    "ChargeDate": dashed_date_to_iso(t["charge_date"]) if t.get("charge_date") else None,
-                    "Card": t.get("card"),
-                })
+            file_rows = [
+                _row("Banamex", fname, dashed_date_to_iso(t["date"]),
+                     t["description"], t["amount"], t["type"],
+                     "YES" if t.get("source") == "ocr_fallback" else "",
+                     ChargeDate=dashed_date_to_iso(t["charge_date"]) if t.get("charge_date") else None,
+                     Card=t.get("card"))
+                for t in txns
+            ]
         elif bank == "invex":
             txns = parse_invex(pdf_path)
-            for t in txns:
-                cat = categorize(t["description"], t["amount"])
-                file_rows.append({
-                    "Bank": "Invex Volaris",
-                    "File": fname,
-                    "Date": dashed_date_to_iso(t["date"]),
-                    "Description": t["description"],
-                    "Category": cat,
-                    "Amount": t["amount"],
-                    "Type": t["type"],
-                    "Review": "YES" if t.get("is_installment") else "",
-                    "is_installment": t.get("is_installment", False),
-                    "ChargeDate": dashed_date_to_iso(t["charge_date"]) if t.get("charge_date") else None,
-                    "StatementDate": dashed_date_to_iso(t["statement_date"]) if t.get("statement_date") else None,
-                    "InstallmentNum": t.get("installment_num"),
-                    "InstallmentTotal": t.get("installment_total"),
-                    "OriginalAmount": t.get("original_amount"),
-                    "RemainingBalance": t.get("remaining_balance"),
-                    "Rate": t.get("rate"),
-                })
+            file_rows = [
+                _row("Invex Volaris", fname, dashed_date_to_iso(t["date"]),
+                     t["description"], t["amount"], t["type"],
+                     "YES" if t.get("is_installment") else "",
+                     is_installment=t.get("is_installment", False),
+                     ChargeDate=dashed_date_to_iso(t["charge_date"]) if t.get("charge_date") else None,
+                     StatementDate=dashed_date_to_iso(t["statement_date"]) if t.get("statement_date") else None,
+                     InstallmentNum=t.get("installment_num"),
+                     InstallmentTotal=t.get("installment_total"),
+                     OriginalAmount=t.get("original_amount"),
+                     RemainingBalance=t.get("remaining_balance"),
+                     Rate=t.get("rate"))
+                for t in txns
+            ]
         elif bank == "nu":
             txns = parse_nu(pdf_path)
-            for t in txns:
-                cat = categorize(t["description"], t["amount"])
-                file_rows.append({
-                    "Bank": "Nu",
-                    "File": fname,
-                    "Date": t["date"],
-                    "Description": t["description"],
-                    "Category": cat,
-                    "Amount": t["amount"],
-                    "Type": t["type"],
-                    "Review": "",
-                })
+            file_rows = [
+                _row("Nu", fname, t["date"], t["description"], t["amount"], t["type"], "")
+                for t in txns
+            ]
         elif bank == "banorte":
             txns = parse_banorte(pdf_path)
-            for t in txns:
-                cat = categorize(t["description"], t["amount"])
-                file_rows.append({
-                    "Bank": "Banorte",
-                    "File": fname,
-                    "Date": dashed_date_to_iso(t["date"]),
-                    "Description": t["description"],
-                    "Category": cat,
-                    "Amount": t["amount"],
-                    "Type": t["type"],
-                    "Review": "",
-                    "ChargeDate": dashed_date_to_iso(t["charge_date"]) if t.get("charge_date") else None,
-                })
+            file_rows = [
+                _row("Banorte", fname, dashed_date_to_iso(t["date"]),
+                     t["description"], t["amount"], t["type"], "",
+                     ChargeDate=dashed_date_to_iso(t["charge_date"]) if t.get("charge_date") else None)
+                for t in txns
+            ]
         elif bank == "santander":
             txns, ocr_text = parse_santander(pdf_path)
-            for t in txns:
-                cat = categorize(t["description"], t["amount"])
-                file_rows.append({
-                    "Bank": "Santander",
-                    "File": fname,
-                    "Date": dashed_date_to_iso(t["date"]),
-                    "Description": t["description"],
-                    "Category": cat,
-                    "Amount": t["amount"],
-                    "Type": t["type"],
-                    "Review": "YES" if t["needs_review"] else "",
-                })
+            file_rows = [
+                _row("Santander", fname, dashed_date_to_iso(t["date"]),
+                     t["description"], t["amount"], t["type"],
+                     "YES" if t["needs_review"] else "")
+                for t in txns
+            ]
         else:
             print(f"⚠️  Could not identify the bank for: {pdf_path} (skipped)")
             continue
@@ -262,6 +231,19 @@ def build_rows(pdf_paths: list[str]) -> tuple[list[dict], list[dict], list[str]]
     return rows, statement_rows, imported_paths
 
 
+def _style_header(ws, center: bool = False) -> None:
+    for cell in ws[1]:
+        cell.font = Font(bold=True, color="FFFFFF", name="Arial")
+        cell.fill = PatternFill("solid", fgColor="4472C4")
+        if center:
+            cell.alignment = Alignment(horizontal="center")
+
+
+def _set_widths(ws, widths: dict) -> None:
+    for col, width in widths.items():
+        ws.column_dimensions[col].width = width
+
+
 def write_excel(df: pd.DataFrame, statements_df: pd.DataFrame, out_path: str):
     wb = Workbook()
 
@@ -270,10 +252,7 @@ def write_excel(df: pd.DataFrame, statements_df: pd.DataFrame, out_path: str):
     ws.title = "Transactions"
     headers = list(df.columns)
     ws.append(headers)
-    for cell in ws[1]:
-        cell.font = Font(bold=True, color="FFFFFF", name="Arial")
-        cell.fill = PatternFill("solid", fgColor="4472C4")
-        cell.alignment = Alignment(horizontal="center")
+    _style_header(ws, center=True)
 
     for _, row in df.iterrows():
         ws.append(list(row))
@@ -296,9 +275,7 @@ def write_excel(df: pd.DataFrame, statements_df: pd.DataFrame, out_path: str):
     # --- Sheet 2: Summary by category ---
     ws2 = wb.create_sheet("Summary by Category")
     ws2.append(["Category", "Total", "# Transactions"])
-    for cell in ws2[1]:
-        cell.font = Font(bold=True, color="FFFFFF", name="Arial")
-        cell.fill = PatternFill("solid", fgColor="4472C4")
+    _style_header(ws2)
 
     categories = sorted(df["Category"].unique()) if len(df) else []
     for i, cat in enumerate(categories, start=2):
@@ -308,17 +285,13 @@ def write_excel(df: pd.DataFrame, statements_df: pd.DataFrame, out_path: str):
         ws2.cell(row=i, column=2).number_format = "$#,##0.00"
         ws2.cell(row=i, column=3,
                   value=f"=COUNTIF(Transactions!{category_col}2:{category_col}{n},A{i})")
-    ws2.column_dimensions["A"].width = 32
-    ws2.column_dimensions["B"].width = 16
-    ws2.column_dimensions["C"].width = 16
+    _set_widths(ws2, {"A": 32, "B": 16, "C": 16})
 
     # --- Sheet 3: Summary by month ---
     if month_col:
         ws3 = wb.create_sheet("Summary by Month")
         ws3.append(["Month", "Total Spent (charges)", "Total Paid (payments)"])
-        for cell in ws3[1]:
-            cell.font = Font(bold=True, color="FFFFFF", name="Arial")
-            cell.fill = PatternFill("solid", fgColor="4472C4")
+        _style_header(ws3)
         months = sorted(df["Month"].unique()) if len(df) else []
         type_col = get_column_letter(headers.index("Type") + 1)
         for i, month in enumerate(months, start=2):
@@ -333,9 +306,7 @@ def write_excel(df: pd.DataFrame, statements_df: pd.DataFrame, out_path: str):
                              f'Transactions!{month_col}2:{month_col}{n},A{i},'
                              f'Transactions!{type_col}2:{type_col}{n},"payment")'))
             ws3.cell(row=i, column=3).number_format = "$#,##0.00"
-        ws3.column_dimensions["A"].width = 14
-        ws3.column_dimensions["B"].width = 22
-        ws3.column_dimensions["C"].width = 22
+        _set_widths(ws3, {"A": 14, "B": 22, "C": 22})
 
     # --- Sheet 4: Top Merchants (charges only) ---
     if "MerchantNorm" in headers and len(df):
@@ -343,9 +314,7 @@ def write_excel(df: pd.DataFrame, statements_df: pd.DataFrame, out_path: str):
         type_col = get_column_letter(headers.index("Type") + 1)
         ws4 = wb.create_sheet("Top Merchants")
         ws4.append(["Merchant", "Total Charged", "# Transactions"])
-        for cell in ws4[1]:
-            cell.font = Font(bold=True, color="FFFFFF", name="Arial")
-            cell.fill = PatternFill("solid", fgColor="4472C4")
+        _style_header(ws4)
         # sort by actual spend so the highest merchants land on top; the
         # cells themselves stay live SUMIFS/COUNTIFS formulas.
         merchants = list(
@@ -362,18 +331,14 @@ def write_excel(df: pd.DataFrame, statements_df: pd.DataFrame, out_path: str):
             ws4.cell(row=i, column=3,
                       value=(f'=COUNTIFS(Transactions!{merchant_col}2:{merchant_col}{n},A{i},'
                              f'Transactions!{type_col}2:{type_col}{n},"charge")'))
-        ws4.column_dimensions["A"].width = 32
-        ws4.column_dimensions["B"].width = 16
-        ws4.column_dimensions["C"].width = 16
+        _set_widths(ws4, {"A": 32, "B": 16, "C": 16})
 
     # --- Sheet 5: Average ticket per category (charges only) ---
     if len(df):
         type_col = get_column_letter(headers.index("Type") + 1)
         ws5 = wb.create_sheet("Avg Ticket by Category")
         ws5.append(["Category", "Avg Charge", "# Charges"])
-        for cell in ws5[1]:
-            cell.font = Font(bold=True, color="FFFFFF", name="Arial")
-            cell.fill = PatternFill("solid", fgColor="4472C4")
+        _style_header(ws5)
         for i, cat in enumerate(categories, start=2):
             ws5.cell(row=i, column=1, value=cat)
             ws5.cell(row=i, column=2,
@@ -384,9 +349,7 @@ def write_excel(df: pd.DataFrame, statements_df: pd.DataFrame, out_path: str):
             ws5.cell(row=i, column=3,
                       value=(f'=COUNTIFS(Transactions!{category_col}2:{category_col}{n},A{i},'
                              f'Transactions!{type_col}2:{type_col}{n},"charge")'))
-        ws5.column_dimensions["A"].width = 32
-        ws5.column_dimensions["B"].width = 16
-        ws5.column_dimensions["C"].width = 16
+        _set_widths(ws5, {"A": 32, "B": 16, "C": 16})
 
     # --- Sheet 6: Committed MSI debt (Phase 4.3) - precomputed, not SUMIFS:
     # it's a forward projection over future months that have no transaction
@@ -396,9 +359,7 @@ def write_excel(df: pd.DataFrame, statements_df: pd.DataFrame, out_path: str):
         if len(active):
             ws6 = wb.create_sheet("Committed MSI Debt")
             ws6.append(["Bank", "Merchant", "Monthly Amount", "Installment", "End Month"])
-            for cell in ws6[1]:
-                cell.font = Font(bold=True, color="FFFFFF", name="Arial")
-                cell.fill = PatternFill("solid", fgColor="4472C4")
+            _style_header(ws6)
             row_i = 2
             for _, r in active.iterrows():
                 ws6.cell(row=row_i, column=1, value=r["Bank"])
@@ -408,11 +369,7 @@ def write_excel(df: pd.DataFrame, statements_df: pd.DataFrame, out_path: str):
                 ws6.cell(row=row_i, column=4, value=f'{int(r["InstallmentNum"])}/{int(r["InstallmentTotal"])}')
                 ws6.cell(row=row_i, column=5, value=r["EndMonth"])
                 row_i += 1
-            ws6.column_dimensions["A"].width = 14
-            ws6.column_dimensions["B"].width = 32
-            ws6.column_dimensions["C"].width = 16
-            ws6.column_dimensions["D"].width = 12
-            ws6.column_dimensions["E"].width = 12
+            _set_widths(ws6, {"A": 14, "B": 32, "C": 16, "D": 12, "E": 12})
 
             projection = monthly_projection(active)
             if projection:
@@ -433,9 +390,7 @@ def write_excel(df: pd.DataFrame, statements_df: pd.DataFrame, out_path: str):
     if len(util_df):
         ws7 = wb.create_sheet("Credit Utilization")
         ws7.append(["Bank", "Cutoff Date", "Closing Balance", "Credit Limit", "Utilization %"])
-        for cell in ws7[1]:
-            cell.font = Font(bold=True, color="FFFFFF", name="Arial")
-            cell.fill = PatternFill("solid", fgColor="4472C4")
+        _style_header(ws7)
         for i, (_, r) in enumerate(util_df.sort_values("CutoffDate").iterrows(), start=2):
             ws7.cell(row=i, column=1, value=r["Bank"])
             ws7.cell(row=i, column=2, value=r["CutoffDate"])
@@ -446,11 +401,7 @@ def write_excel(df: pd.DataFrame, statements_df: pd.DataFrame, out_path: str):
             if r["ClosingBalance"] is not None and r["CreditLimit"]:
                 ws7.cell(row=i, column=5, value=r["ClosingBalance"] / r["CreditLimit"])
                 ws7.cell(row=i, column=5).number_format = "0.0%"
-        ws7.column_dimensions["A"].width = 14
-        ws7.column_dimensions["B"].width = 14
-        ws7.column_dimensions["C"].width = 16
-        ws7.column_dimensions["D"].width = 16
-        ws7.column_dimensions["E"].width = 14
+        _set_widths(ws7, {"A": 14, "B": 14, "C": 16, "D": 16, "E": 14})
 
     # --- Sheet 8: Fees & Interest by Year - categorize.py already routes
     # COMISION/INTERES/ANUALIDAD/IVA rows to "Card Interest/Fees" (Phase 1);
@@ -458,9 +409,7 @@ def write_excel(df: pd.DataFrame, statements_df: pd.DataFrame, out_path: str):
     if "Category" in headers and len(df):
         ws8 = wb.create_sheet("Fees & Interest by Year")
         ws8.append(["Year", "Total Fees & Interest"])
-        for cell in ws8[1]:
-            cell.font = Font(bold=True, color="FFFFFF", name="Arial")
-            cell.fill = PatternFill("solid", fgColor="4472C4")
+        _style_header(ws8)
         years = sorted({m[:4] for m in df["Month"]})
         month_col = get_column_letter(headers.index("Month") + 1)
         for i, year in enumerate(years, start=2):
@@ -471,8 +420,7 @@ def write_excel(df: pd.DataFrame, statements_df: pd.DataFrame, out_path: str):
                              f'Transactions!{month_col}2:{month_col}{n},">="&"{year}-01",'
                              f'Transactions!{month_col}2:{month_col}{n},"<="&"{year}-12")'))
             ws8.cell(row=i, column=2).number_format = "$#,##0.00"
-        ws8.column_dimensions["A"].width = 10
-        ws8.column_dimensions["B"].width = 20
+        _set_widths(ws8, {"A": 10, "B": 20})
 
     wb.save(out_path)
 

@@ -17,12 +17,8 @@ import re
 from pathlib import Path
 
 from validate import _pdf_text
+from parsers.base import MONTHS, SPANISH_MONTHS, clean_amount
 
-MONTHS = "ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic"
-SPANISH_MONTHS = {
-    "ENE": 1, "FEB": 2, "MAR": 3, "ABR": 4, "MAY": 5, "JUN": 6,
-    "JUL": 7, "AGO": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DIC": 12,
-}
 DATE_TOKEN = rf"(\d{{2}})[-\s]({MONTHS})[-\s](\d{{4}})"
 
 PERIOD_RE = re.compile(rf"Periodo:?\s*{DATE_TOKEN}\s*al\s*{DATE_TOKEN}", re.IGNORECASE)
@@ -51,10 +47,6 @@ LIVERPOOL_CHARGES_RE = re.compile(r"COMPRAS Y CARGOS\s+([\d,]+\.\d{2})", re.IGNO
 LIVERPOOL_PAYMENTS_RE = re.compile(r"PAGOS Y ABONOS\s+(-?[\d,]+\.\d{2})", re.IGNORECASE)
 LIVERPOOL_COMMISSIONS_RE = re.compile(r"COMISIONES\s+([\d,]+\.\d{2})", re.IGNORECASE)
 LIVERPOOL_FILENAME_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
-
-
-def clean_amount(raw: str) -> float:
-    return float(raw.replace(",", ""))
 
 
 def _num(pattern: re.Pattern, text: str) -> float | None:
