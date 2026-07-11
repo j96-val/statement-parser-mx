@@ -60,7 +60,7 @@ def normalize_line(line: str) -> str:
 
 def parse_liverpool(
     pdf_path: str, primary_cardholder_only: bool = True
-) -> tuple[list[Transaction], list[str]]:
+) -> tuple[list[Transaction], list[str], str]:
     pages_text = ocr_pdf_pages(pdf_path)
     full_text = "\n".join(pages_text)
     lines = full_text.split("\n")
@@ -156,13 +156,13 @@ def parse_liverpool(
         if flag:
             review_needed.append(line)
 
-    return transactions, review_needed
+    return transactions, review_needed, full_text
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         sys.exit("Usage: python3 parsers/liverpool.py path/to/statement.pdf")
-    txns, review = parse_liverpool(sys.argv[1])
+    txns, review, _ = parse_liverpool(sys.argv[1])
     print(f"Total transactions extracted: {len(txns)}")
     for t in txns:
         print(t)

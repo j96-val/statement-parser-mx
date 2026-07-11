@@ -21,6 +21,7 @@ from parsers.invex import parse_invex
 from parsers.nu import parse_nu
 from categorize import categorize
 import db
+import validate
 
 # NOTE: kept in Spanish because these are the literal month abbreviations
 # printed on the statements themselves (used as dict keys for lookup).
@@ -101,13 +102,15 @@ def build_rows(pdf_paths: list[str]) -> list[dict]:
     for pdf_path in pdf_paths:
         bank = detect_bank(pdf_path)
         fname = Path(pdf_path).stem
+        ocr_text = None
+        file_rows = []
 
         if bank == "liverpool":
             year = guess_year_from_filename(pdf_path)
-            txns, _ = parse_liverpool(pdf_path)
+            txns, _, ocr_text = parse_liverpool(pdf_path)
             for t in txns:
                 cat = categorize(t["description"], t["amount"])
-                rows.append({
+                file_rows.append({
                     "Bank": "Liverpool",
                     "File": fname,
                     "Date": liverpool_date_to_iso(t["date"], year),
@@ -121,7 +124,7 @@ def build_rows(pdf_paths: list[str]) -> list[dict]:
             txns = parse_banamex(pdf_path)
             for t in txns:
                 cat = categorize(t["description"], t["amount"])
-                rows.append({
+                file_rows.append({
                     "Bank": "Banamex",
                     "File": fname,
                     "Date": dashed_date_to_iso(t["date"]),
@@ -135,7 +138,7 @@ def build_rows(pdf_paths: list[str]) -> list[dict]:
             txns = parse_invex(pdf_path)
             for t in txns:
                 cat = categorize(t["description"], t["amount"])
-                rows.append({
+                file_rows.append({
                     "Bank": "Invex Volaris",
                     "File": fname,
                     "Date": dashed_date_to_iso(t["date"]),
@@ -144,12 +147,13 @@ def build_rows(pdf_paths: list[str]) -> list[dict]:
                     "Amount": t["amount"],
                     "Type": t["type"],
                     "Review": "YES" if t.get("is_installment") else "",
+                    "is_installment": t.get("is_installment", False),
                 })
         elif bank == "nu":
             txns = parse_nu(pdf_path)
             for t in txns:
                 cat = categorize(t["description"], t["amount"])
-                rows.append({
+                file_rows.append({
                     "Bank": "Nu",
                     "File": fname,
                     "Date": t["date"],
@@ -161,9 +165,19 @@ def build_rows(pdf_paths: list[str]) -> list[dict]:
                 })
         else:
             print(f"⚠️  Could not identify the bank for: {pdf_path} (skipped)")
+            continue
 
-    for r in rows:
-        r["Month"] = r["Date"][:7]  # YYYY-MM
+        for r in file_rows:
+            r["Month"] = r["Date"][:7]  # YYYY-MM
+
+        ok, messages = validate.validate_file(bank, file_rows, pdf_path, ocr_text)
+        for m in messages:
+            print(f"  {fname}: {m}")
+        if ok:
+            rows.extend(file_rows)
+        else:
+            print(f"⛔ {fname}: failed validation, not imported")
+
     return rows
 
 
