@@ -1,5 +1,6 @@
 # Sensitive financial data - never commit these
 statements/*.pdf
+statements/processed/*.pdf
 reports/*.xlsx
 *.db
 

@@ -5,6 +5,7 @@ them, and generates a single consolidated Excel workbook with a
 transactions view + summary by category + summary by month.
 """
 import re
+import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -97,8 +98,9 @@ def guess_year_from_filename(pdf_path: str) -> int:
     return datetime.now().year
 
 
-def build_rows(pdf_paths: list[str]) -> list[dict]:
+def build_rows(pdf_paths: list[str]) -> tuple[list[dict], list[str]]:
     rows = []
+    imported_paths = []
     for pdf_path in pdf_paths:
         bank = detect_bank(pdf_path)
         fname = Path(pdf_path).stem
@@ -175,10 +177,11 @@ def build_rows(pdf_paths: list[str]) -> list[dict]:
             print(f"  {fname}: {m}")
         if ok:
             rows.extend(file_rows)
+            imported_paths.append(pdf_path)
         else:
             print(f"⛔ {fname}: failed validation, not imported")
 
-    return rows
+    return rows, imported_paths
 
 
 def write_excel(df: pd.DataFrame, out_path: str):
@@ -271,7 +274,7 @@ if __name__ == "__main__":
             sys.exit(1)
         print(f"Processing {len(pdf_paths)} PDF(s) from {folder}/ ...")
 
-    rows = build_rows(pdf_paths)
+    rows, imported_paths = build_rows(pdf_paths)
     conn = db.connect()
     db.init_db(conn)
     n_new = db.insert_transactions(conn, rows)
@@ -285,3 +288,16 @@ if __name__ == "__main__":
     print(f"Saved to {out}. DB now holds {len(df)} transactions total.")
     if len(df):
         print(df.groupby(["Bank", "Category"])["Amount"].sum().sort_values(ascending=False))
+
+    # validated + inserted PDFs move out of statements/ so the next run
+    # doesn't re-scan them; original file is kept (not deleted) for re-extraction
+    # if a parser bug is found later - see ROADMAP.md 1.4.
+    processed_dir = Path(__file__).parent / "statements" / "processed"
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    for pdf_path in imported_paths:
+        src = Path(pdf_path)
+        if src.resolve().parent == processed_dir.resolve():
+            continue
+        shutil.move(str(src), str(processed_dir / src.name))
+    if imported_paths:
+        print(f"Moved {len(imported_paths)} processed PDF(s) to {processed_dir}/")
