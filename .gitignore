@@ -1,0 +1,15 @@
+# Sensitive financial data - never commit these
+statements/*.pdf
+reports/*.xlsx
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+.DS_Store
+
+# Private local instructions
+CLAUDE.local.md
