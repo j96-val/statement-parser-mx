@@ -139,6 +139,23 @@ def apply_override(conn: sqlite3.Connection, description: str, fallback: str) ->
     return row["category"] if row else fallback
 
 
+def set_override(conn: sqlite3.Connection, description: str, category: str) -> None:
+    """Persists a category correction (viewer click-to-correct) and retro-fixes
+    every already-inserted transaction with the same description, so the
+    change is visible immediately, not just on the next import.
+    # ponytail: exact-description override; add wildcard/merchant-norm
+    # patterns if per-merchant (not per-description) grouping is wanted."""
+    conn.execute(
+        "INSERT INTO category_overrides (merchant_pattern, category, created_at) VALUES (?, ?, ?)",
+        (description, category, datetime.now().isoformat()),
+    )
+    conn.execute(
+        "UPDATE transactions SET category = ? WHERE description = ?",
+        (category, description),
+    )
+    conn.commit()
+
+
 def insert_transactions(conn: sqlite3.Connection, rows: list[dict]) -> int:
     seen_occ = {}
     inserted = 0

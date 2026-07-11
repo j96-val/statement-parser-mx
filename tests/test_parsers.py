@@ -403,6 +403,26 @@ def test_check_continuity_no_prior_statement_is_silent():
     warning = validate.check_continuity(conn, _stmt_row(PrevBalance=1000.0))
     assert warning is None
 
+def test_set_override_retrofits_existing_rows_and_persists():
+    # Phase 8 viewer write path: correcting a category must (a) fix rows
+    # already in the DB immediately, and (b) persist so future imports of the
+    # same description are recategorized via apply_override.
+    conn = db.connect(":memory:")
+    db.init_db(conn)
+    db.insert_transactions(conn, [{
+        "Bank": "Nu", "Date": "2026-06-01", "Description": "STARBUCKS COYOACAN",
+        "Category": "Restaurants", "Amount": 80.0, "Type": "charge", "Review": "",
+        "File": "f",
+    }])
+    db.set_override(conn, "STARBUCKS COYOACAN", "Health/Gym")
+
+    row = conn.execute(
+        "SELECT category FROM transactions WHERE description = ?", ("STARBUCKS COYOACAN",)
+    ).fetchone()
+    assert row["category"] == "Health/Gym"
+
+    assert db.apply_override(conn, "STARBUCKS COYOACAN", "Restaurants") == "Health/Gym"
+
 
 if __name__ == "__main__":
     # zero-dependency runner: execute every test_* function in this module
