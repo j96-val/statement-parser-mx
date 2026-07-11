@@ -101,3 +101,11 @@ the literal Spanish text printed on Mexican bank statements.
 Statement PDFs and generated Excel files contain personal financial
 information — `.gitignore` excludes them from the repository. The code
 itself is safe to share; your statements are not.
+
+## Disclaimer
+
+Esta herramienta no es asesoría financiera, contable ni fiscal. Los montos
+se extraen de tus PDFs mediante parsing y OCR automatizados, procesos que
+pueden producir errores. Eres responsable de verificar los datos extraídos
+contra el estado de cuenta original antes de usarlos para cualquier
+decisión. Software provisto "tal cual", sin garantía — ver [LICENSE](LICENSE).
